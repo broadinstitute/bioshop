@@ -1,0 +1,6 @@
+transformers
+datasets
+wandb
+gcsfs
+pyfaidx 
+cyvcf2
