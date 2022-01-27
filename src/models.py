@@ -21,14 +21,14 @@ class VariantFilterModel(object):
         self.model_path = model_path
         self.device = device or self.DefaultDevice
         self.model = BertForSequenceClassification.from_pretrained(self.model_path, num_labels=self.num_labels).to(device=self.device)
-        self.softmax_op = torch.nn.Softmax()
+        self.softmax_op = torch.nn.Softmax(dim=-1)
 
     def predict(self, inp):
         inp = inp.to(device=self.device)
         outp = self.model(input_ids=inp)
         logits = outp["logits"].detach()
         softmax = self.softmax_op.forward(logits)
-        argmax = torch.argmax(softmax, dim=1)
+        argmax = torch.argmax(softmax, dim=1)[:, None]
 
         ret = dict(
             logits=logits.cpu().numpy(),
