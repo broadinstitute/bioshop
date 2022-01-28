@@ -24,8 +24,10 @@ class VariantFilterModel(object):
         self.softmax_op = torch.nn.Softmax(dim=-1)
 
     def predict(self, inp):
-        inp = inp.to(device=self.device)
-        outp = self.model(input_ids=inp)
+        if type(inp) != dict:
+            inp = {"input_ids": inp}
+        inp = {key: val.to(device=self.device) for (key, val) in inp.items()}
+        outp = self.model(**inp)
         logits = outp["logits"].detach()
         softmax = self.softmax_op.forward(logits)
         argmax = torch.argmax(softmax, dim=1)[:, None]
@@ -52,7 +54,7 @@ class VariantTokenizer(object):
         kmers = [k_or_mask(seq[i:i + self.klen]) for i in range(len(seq) - self.klen + 1)]
         return kmers
 
-    def tokenize(self, gt=None):
+    def tokenize_only(self, gt=None):
         (a1, a2) = [self.kmerize(al) for al in gt]
         while (len(a1) + len(a2)) > (self.max_length - 3):
             a1 = a1[1:-1]
@@ -60,17 +62,16 @@ class VariantTokenizer(object):
         inp = ["[CLS]"] + a1 + ["[SEP]"] + a2 + ["[SEP]"]
         toks = list(map(self.vocab.__getitem__, inp))
         toks += [0] * (self.max_length - len(toks))
-        return toks
-
-    def tokenize_for_training(self, gt=None):
-        toks = self.tokenize(gt=gt)
-        mask = list(map(bool, toks))
-        types = [0] * self.max_length
         ret = {
-            "input_ids": toks,
-            "attention_mask": list(map(lambda val: int(bool(val)), toks)),
-            "token_type_ids": ([0] * self.max_length)
+            "input_ids": toks
         }
+        return ret
+
+    def tokenize(self, gt=None):
+        ret = self.tokenize_only(gt=gt)
+        toks = ret["input_ids"]
+        ret["attention_mask"] = list(map(lambda val: int(bool(val)), toks))
+        ret["token_type_ids"] = ([0] * self.max_length)
         return ret
 
 if __name__ == "__main__":

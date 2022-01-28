@@ -32,7 +32,7 @@ class VariantWorker(object):
             if set(gt_ref[0] + gt_ref[1]) - set('AGTC'):
                 gt_ref = None
             else:
-                gt_ref = self.tokenizer.tokenize(gt_ref)
+                gt_ref = self.tokenizer.tokenize_for_training(gt_ref)
             gt_inps[gt] = gt_ref
         ret = {
             "locus": f"{call.CHROM}:{call.POS}",
@@ -92,13 +92,22 @@ class Batcher(object):
     def process_batch(self, batch):
         return [[1,1,1,1] for it in batch]
     
+    def pivot_batch(self, batch):
+        t_batch = {key: list() for key in batch[0]}
+        for item in batch:
+            for key in item:
+                t_batch[key].append(item[key])
+        for key in t_batch:
+            t_batch[key] = torch.tensor(t_batch[key])
+        return t_batch
+
     def do_batch(self, force=False):
         if force or not self.batch_ready:
             return
         batch = self.batch_pool[:self.batch_size]
         self.batch_pool = self.batch_pool[self.batch_size:]
         (keys, batch) = list(zip(*batch))
-        batch = torch.tensor(batch)
+        batch = self.pivot_batch(batch)
         batch_results = self.process_batch(batch)
         for (idx, key) in enumerate(keys):
             (locus, gt) = key
