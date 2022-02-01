@@ -1,9 +1,10 @@
 import re
 import torch
 import numpy as np
+from threading import Lock
 from . models import VariantTokenizer
 
-class VariantWorker(object):
+class VariantToVector(object):
     def __init__(self, ref=None, tokenizer=None, window=96):
         self.ref = ref
         self.tokenizer = tokenizer
@@ -27,27 +28,35 @@ class VariantWorker(object):
         (pre, post) = self.get_reference_context(call)
         gt_counts = self.get_genotypes(call)
         gt_inps = {}
+        ref_key = (call.REF, call.REF)
         for gt in gt_counts:
+            if (gt == ('.', '.')) or (gt == ref_key):
+                gt_inps[gt] = None
+                continue
             gt_ref = [f"{pre}{var if var != '.' else call.REF}{post}" for var in gt]
             if set(gt_ref[0] + gt_ref[1]) - set('AGTC'):
                 gt_ref = None
             else:
-                gt_ref = self.tokenizer.tokenize_for_training(gt_ref)
+                gt_ref = self.tokenizer.tokenize(gt_ref)
             gt_inps[gt] = gt_ref
         ret = {
             "locus": f"{call.CHROM}:{call.POS}",
             "gt_inps": gt_inps,
             "gt_counts": gt_counts,
-            "var_type": call.var_type
+            "var_type": call.var_type,
+            "ref": call.REF,
         }
         return ret
 
 class Batcher(object):
-    def __init__(self, batch_size=120):
+    def __init__(self, model=None, batch_size=120):
+        self.model = model
         self.batch_size = batch_size
         self.pending_calls = {}
         self.batch_pool = []
         self.completed_calls = []
+        self._lock = th.Lock()
+        self._batch_ready_cv = th.Condition(lock=self._lock)
 
     @property
     def num_pending_batches(self):
@@ -69,29 +78,29 @@ class Batcher(object):
     def completed_ready(self):
         return bool(self.num_completed_calls)
     
-    def flush(self):
-        self.do_batch(force=True)
-
     def add_call(self, call):
         call['gt_scores'] = {}
         key = call['locus']
-        self.pending_calls[key] = call
+        pool = []
         for (gt, toks) in call['gt_inps'].items():
             if toks is None:
                 call['gt_scores'][gt] = None
                 continue
             key = (call['locus'], gt)
             pair = (key, toks)
-            self.batch_pool.append(pair)
+            pool.append(pair)
+        with self._lock:
+            self.batch_pool += pool
+            self.pending_calls[key] = call
+            if self.batch_ready:
+                self._batch_ready_cv.notify()
 
     def get_completed_calls(self):
-        ret = self.completed_calls
-        self.completed_calls = []
+        with self._lock:
+            ret = self.completed_calls
+            self.completed_calls = []
         return ret
 
-    def process_batch(self, batch):
-        return [[1,1,1,1] for it in batch]
-    
     def pivot_batch(self, batch):
         t_batch = {key: list() for key in batch[0]}
         for item in batch:
@@ -101,22 +110,40 @@ class Batcher(object):
             t_batch[key] = torch.tensor(t_batch[key])
         return t_batch
 
-    def do_batch(self, force=False):
-        if force or not self.batch_ready:
-            return
-        batch = self.batch_pool[:self.batch_size]
-        self.batch_pool = self.batch_pool[self.batch_size:]
+    def get_batch(self, force=False):
+        with self._batch_ready_cv:
+            if force or not self.batch_ready:
+                # XXX: timeout?
+                ok = self._batch_ready_cv.wait(timeout=1)
+                if not ok:
+                    return None
+            batch = self.batch_pool[:self.batch_size]
+            self.batch_pool = self.batch_pool[self.batch_size:]
         (keys, batch) = list(zip(*batch))
         batch = self.pivot_batch(batch)
-        batch_results = self.process_batch(batch)
-        for (idx, key) in enumerate(keys):
-            (locus, gt) = key
-            call = self.pending_calls[locus]
-            outp = {k: np.squeeze(v[idx, :]) for (k, v) in batch_results.items()}
-            call['gt_scores'][gt] = outp
-            if len(call['gt_scores']) == len(call['gt_inps']):
-                del self.pending_calls[locus]
-                self.completed_calls.append(call)
+        return (keys, batch)
+
+    def postprocess_batch(self, keys=None, results=None):
+        with self._lock:
+            for (idx, key) in enumerate(keys):
+                (locus, gt) = key
+                call = self.pending_calls[locus]
+                outp = {k: np.squeeze(v[idx, :]) for (k, v) in results.items()}
+                call['gt_scores'][gt] = outp
+                if len(call['gt_scores']) == len(call['gt_inps']):
+                    del self.pending_calls[locus]
+                    self.completed_calls.append(call)
+
+    def do_batch(self, force=False):
+        batch = self.get_batch(force=force)
+        if batch is None:
+            return
+        (keys, batch)  = batch
+        results = self.model.predict(batch)
+        self.postprocess_batch(keys=keys, results=results)
+
+    def flush(self):
+        self.do_batch(force=True)
 
 def build_worker(ref_path=None, klen=None):
     from pyfaidx import Fasta

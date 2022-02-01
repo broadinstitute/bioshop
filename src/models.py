@@ -29,13 +29,17 @@ class VariantFilterModel(object):
         inp = {key: val.to(device=self.device) for (key, val) in inp.items()}
         outp = self.model(**inp)
         logits = outp["logits"].detach()
+        # XXX: hard wired for 2x2 classes
+        logits = logits.reshape(logits.shape[0], 2, 2)
         softmax = self.softmax_op.forward(logits)
         argmax = torch.argmax(softmax, dim=1)[:, None]
+        logodds = torch.log(softmax[:, :, 0] / softmax[:, :, 1])
 
         ret = dict(
             logits=logits.cpu().numpy(),
             softmax=softmax.cpu().numpy(),
-            argmax=argmax.cpu().numpy()
+            argmax=argmax.cpu().numpy(),
+            logodds=logodds.cpu().numpy(),
         )
         return ret
 
