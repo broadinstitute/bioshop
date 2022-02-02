@@ -1,7 +1,7 @@
 import re
 import torch
 import numpy as np
-from threading import Lock
+from threading import Lock, Condition
 from . models import VariantTokenizer
 
 class VariantToVector(object):
@@ -55,8 +55,8 @@ class Batcher(object):
         self.pending_calls = {}
         self.batch_pool = []
         self.completed_calls = []
-        self._lock = th.Lock()
-        self._batch_ready_cv = th.Condition(lock=self._lock)
+        self._lock = Lock()
+        self._batch_ready_cv = Condition(lock=self._lock)
 
     @property
     def num_pending_batches(self):
@@ -80,18 +80,18 @@ class Batcher(object):
     
     def add_call(self, call):
         call['gt_scores'] = {}
-        key = call['locus']
+        locus = call['locus']
         pool = []
         for (gt, toks) in call['gt_inps'].items():
             if toks is None:
                 call['gt_scores'][gt] = None
                 continue
-            key = (call['locus'], gt)
+            key = (locus, gt)
             pair = (key, toks)
             pool.append(pair)
-        with self._lock:
+        with self._batch_ready_cv:
             self.batch_pool += pool
-            self.pending_calls[key] = call
+            self.pending_calls[locus] = call
             if self.batch_ready:
                 self._batch_ready_cv.notify()
 
