@@ -80,19 +80,22 @@ class Batcher(object):
     
     def add_call(self, call):
         call['gt_scores'] = {}
-        locus = call['locus']
+        call_id = call['call_id']
         pool = []
         for (gt, toks) in call['gt_inps'].items():
             if toks is None:
                 call['gt_scores'][gt] = None
                 continue
-            key = (locus, gt)
+            key = (call_id, gt)
             pair = (key, toks)
             pool.append(pair)
+        if not pool:
+            self.completed_calls.append(call)
+            return
         with self._batch_ready_cv:
             self.batch_pool += pool
-            assert locus not in self.pending_calls, f"{locus} in self.pending_calls"
-            self.pending_calls[locus] = call
+            assert call_id not in self.pending_calls, f"{locus} in self.pending_calls"
+            self.pending_calls[call_id] = call
             if self.batch_ready:
                 self._batch_ready_cv.notify()
 
@@ -127,12 +130,12 @@ class Batcher(object):
     def postprocess_batch(self, keys=None, results=None):
         with self._lock:
             for (idx, key) in enumerate(keys):
-                (locus, gt) = key
-                call = self.pending_calls[locus]
+                (call_id, gt) = key
+                call = self.pending_calls[call_id]
                 outp = {k: np.squeeze(v[idx, :]) for (k, v) in results.items()}
                 call['gt_scores'][gt] = outp
                 if len(call['gt_scores']) == len(call['gt_inps']):
-                    del self.pending_calls[locus]
+                    del self.pending_calls[call_id]
                     self.completed_calls.append(call)
 
     def do_batch(self, force=False):

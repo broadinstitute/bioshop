@@ -56,18 +56,19 @@ class VariantToVectorWorker(Worker):
         self._running.set()
         while self.running:
             try:
-                ref_key = self.in_q.get(timeout=1)
+                work = self.in_q.get(timeout=1)
             except queue.Empty:
                 #print(f"{self.__class__.__name__} loop: in_q empty. run={self.running}")
                 continue
-            (chrom, pos) = ref_key
-            site = str.join(':', (chrom, str(pos)))
+            (chrom, pos) = (work['chrom'], work['pos'])
+            site = f"{chrom}:{pos}"
             region = vcf(site)
             call = next(region)
             while call.POS < pos:
                 call = next(region)
             assert call.POS == pos, f"{call.POS} != {pos}"
             vec = vectorizer.process_call(call)
+            vec['call_id'] = work['call_id']
             self.out_q.put(vec)
             self.in_q.task_done()
             
@@ -114,7 +115,7 @@ class MainRunner(Worker):
         self.vcf_out_path = vcf_out_path
         self.out_q = self.manager.to_scatter
         self.in_q = self.manager.to_gather
-        self.call_order = []
+        self.next_call_id = 0
         self.pending_calls = {}
         self.ready_calls = {}
 
@@ -125,60 +126,65 @@ class MainRunner(Worker):
             if call['gt_scores'][al] == None:
                 continue
             call['gt_scores'][al]['score'] = call['gt_scores'][al]['logodds'][var_idx]
-        key = call['locus'].split(':')
-        key = (key[0], int(key[1]))
-        pending_call = self.pending_calls.pop(key)
-        self.ready_calls[key] = (pending_call, call)
+        call_id = call['call_id']
+        pending_call = self.pending_calls.pop(call_id)
+        self.ready_calls[call_id] = (pending_call, call)
         #print(call['locus'], call["var_type"], "REF", call["ref"])
         #pprint.pprint(call['gt_scores'])
         #print()
 
-    def push_call(self, call=None):
-        key = (call.CHROM, call.POS)
-        self.call_order.append(key)
+    def push_call(self, call=None, call_id=None):
+        call_info = dict(call_id=call_id)
         if not (call.is_snp or call.is_indel):
-            self.ready_calls[key] = (call, None)
+            call_info["skipped"] = "var_type"
+            self.ready_calls[call_id] = (call, call_info)
             return
         if call.FILTER:
-            self.ready_calls[key] = (call, None)
+            call_info["skipped"] = "filtered"
+            self.ready_calls[call_id] = (call, call_info)
             return
-        self.pending_calls[key] = call
-        self.out_q.put(key)
+        self.pending_calls[call_id] = call
+        work = {"chrom": call.CHROM, "pos": call.POS, "call_id": call_id}
+        self.out_q.put(work)
     
     def gather_calls(self):
         ret = []
+        print("gather")
         while True:
             try:
-                call_info = self.in_q.get(block=False)
+                call_info = self.in_q.get(timeout=1)
             except queue.Empty:
                 break
             self.post_process_call(call_info)
             self.in_q.task_done()
-        while self.call_order:
-            next_locus = self.call_order[0]
-            #print(next_locus, next_locus in self.ready_calls, next_locus in self.pending_calls)
-            if next_locus not in self.ready_calls:
-                break
-            call_info = self.ready_calls.pop(next_locus)
+        while self.next_call_id in self.ready_calls:
+            call_info = self.ready_calls.pop(self.next_call_id)
             ret.append(call_info)
-            self.call_order = self.call_order[1:]
+            self.next_call_id += 1
         return ret
 
-    def _run(self):
+    def scatter_thread(self):
+        print("Starting scatter thread")
         vcf_in = VCF(self.vcf_in_path)
         if self.vcf_idx_path:
             vcf_in.set_index(self.vcf_idx_path)
 
-        for call in vcf_in:
-            key = (call.CHROM, call.POS)
-            self.push_call(call)
+        for (call_id, call) in enumerate(vcf_in):
+            self.push_call(call=call, call_id=call_id)
+
+    def _run(self):
+        scatter_thread = Thread(target=self.scatter_thread)
+        scatter_thread.start()
+        self.next_call_id = 0
+        while True:
             calls_out = self.gather_calls()
             for (vcf_call, predict_call) in calls_out:
-                print(vcf_call.CHROM, vcf_call.POS)
+                print(predict_call['call_id'], vcf_call.CHROM, vcf_call.POS)
 
-def init_manager(batch_size=16, factor=8):
+def init_manager(batch_size=32, factor=8):
     manager = mp.managers.SyncManager()
     manager.start()
+    maxsize = None
     maxsize = int(round(batch_size * factor))
     manager.to_scatter = manager.Queue(maxsize=maxsize)
     manager.to_model = manager.Queue(maxsize=maxsize)
