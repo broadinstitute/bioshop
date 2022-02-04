@@ -24,7 +24,6 @@ class VariantFilterModel(object):
         self.softmax_op = torch.nn.Softmax(dim=-1)
 
     def predict(self, inp):
-        print("running predict")
         if type(inp) != dict:
             inp = {"input_ids": inp}
         inp = {key: val.to(device=self.device).detach() for (key, val) in inp.items()}

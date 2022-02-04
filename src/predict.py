@@ -1,7 +1,7 @@
 import re
 import torch
 import numpy as np
-from multiprocessing import Lock, Condition
+from threading import Lock, Condition
 from . models import VariantTokenizer
 
 class VariantToVector(object):
@@ -10,25 +10,22 @@ class VariantToVector(object):
         self.tokenizer = tokenizer
         self.window = window
     
-    def get_reference_context(self, call=None):
-        start = call.POS - 1
-        end = start + len(call.REF)
-        pre = self.ref[call.CHROM][start - self.window:start]
-        post = self.ref[call.CHROM][end:end + self.window]
+    def get_reference_context(self, call_info=None):
+        pos = call_info['pos']
+        chrom = call_info['chrom']
+        ref = call_info['ref']
+
+        start = pos - 1
+        end = start + len(ref)
+        pre = self.ref[chrom][start - self.window:start]
+        post = self.ref[chrom][end:end + self.window]
         return (pre, post)
     
-    def get_genotypes(self, call=None):
-        # XXX: it might be possible to encode phase
-        gt_bases = [tuple(re.split('[/|]', bases)) for bases in call.gt_bases]
-        gt_uniqs = set(gt_bases)
-        gt_counts = {gt: gt_bases.count(gt) for gt in gt_uniqs}
-        return gt_counts
-
-    def process_call(self, call=None):
-        (pre, post) = self.get_reference_context(call)
-        gt_counts = self.get_genotypes(call)
+    def process_call(self, call_info=None):
+        (pre, post) = self.get_reference_context(call_info=call_info)
+        gt_counts = call_info['gt_counts']
         gt_inps = {}
-        ref_key = (call.REF, call.REF)
+        ref_key = (call_info['ref'], call_info['ref'])
         for gt in gt_counts:
             if (gt == ('.', '.')) or (gt == ref_key):
                 gt_inps[gt] = None
@@ -39,17 +36,11 @@ class VariantToVector(object):
             else:
                 gt_ref = self.tokenizer.tokenize(gt_ref)
             gt_inps[gt] = gt_ref
-        ret = {
-            "locus": f"{call.CHROM}:{call.POS}",
-            "gt_inps": gt_inps,
-            "gt_counts": gt_counts,
-            "var_type": call.var_type,
-            "ref": call.REF,
-        }
-        return ret
+        call_info['gt_inps'] = gt_inps
+        return call_info
 
 class Batcher(object):
-    def __init__(self, model=None, batch_size=120):
+    def __init__(self, model=None, batch_size=None):
         self.model = model
         self.batch_size = batch_size
         self.pending_calls = dict()
@@ -118,6 +109,7 @@ class Batcher(object):
         with self._batch_ready_cv:
             if force or not self.batch_ready:
                 # XXX: timeout?
+                print("starving")
                 ok = self._batch_ready_cv.wait(timeout=1)
                 if not ok:
                     return None
