@@ -1,3 +1,4 @@
+import re
 
 class BaseObject(object):
     pass
@@ -8,33 +9,36 @@ class Site(BaseObject):
         chrom=None,
         pos=None,
         ref=None,
-        ignore=False,
+        filter=None,
+        var_type=None,
         genotypes=None,
-        status=None
+        status="pending",
     ):
         self.site_id = site_id
         self.chrom = chrom
         self.pos = pos
         self.ref = ref
-        self.ignore = ignore
+        self.var_type = var_type
         self.genotypes = genotypes
         self.status = status
+        self.filter = filter
 
-    def load_from_site(cls, site=None, site_id=None):
+    @classmethod
+    def load_from_site(cls, site=None, site_id=None, **kw):
         # load genotypes first
         # XXX: it might be possible to encode phase
         seen = set()
         genotypes = []
         for (bases, var_type) in zip(site.gt_bases, site.gt_types):
-            bases = [tuple(re.split('[/|]', bases)) for bases in bases]
-            if gt_bases in seen:
+            bases = tuple(re.split('[/|]', bases))
+            if bases in seen:
                 continue
-            seen.add(gt_bases)
+            seen.add(bases)
             genotype_id = len(genotypes)
             gt = Genotype(
                 site_id=site_id, 
                 genotype_id=genotype_id,
-                bases=gt_bases,
+                bases=bases,
                 var_type=var_type,
             )
             genotypes.append(gt)
@@ -43,10 +47,12 @@ class Site(BaseObject):
             site_id=site_id,
             chrom=site.CHROM,
             pos=site.POS,
+            filter=site.FILTER,
             genotypes=genotypes,
             var_type=site.var_type,
             ref=site.REF,
-        }
+            **kw
+        )
         return site_obj
 
 class Genotype(BaseObject):
@@ -56,7 +62,7 @@ class Genotype(BaseObject):
         var_type=None,
         ref=None,
         bases=None,
-        ignore=False,
+        status=None,
         log_odds=None
     ):
         self.site_id = site_id
@@ -64,7 +70,7 @@ class Genotype(BaseObject):
         self.var_type = var_type
         self.ref = ref
         self.bases = bases
-        self.ignore = ignore
+        self.status = status
         self.log_odds = log_odds
 
     def is_homref(self):

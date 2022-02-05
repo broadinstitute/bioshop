@@ -13,7 +13,7 @@ class ModelInputStruct(ctypes.Structure):
         ('input_ids', ctypes.c_int * 512), 
         ('attention_mask', ctypes.c_int * 512),
         ('token_type_ids', ctypes.c_int * 512),
-        ('call_id', ctypes.c_int),
+        ('site_id', ctypes.c_int),
         ('genotype_id', ctypes.c_int),
     ]
 
@@ -31,7 +31,7 @@ class ModelInputStruct(ctypes.Structure):
         return np.array(arrays)
 
     def get_key(self):
-        return dict(call_id=self.call_id, genotype_id=self.genotype_id)
+        return dict(site_id=self.site_id, genotype_id=self.genotype_id)
 
 class VariantFilterModel(object):
     DefaultLabels = ("SNP_TP", "SNP_FP", "INDEL_TP", "INDEL_FP")
