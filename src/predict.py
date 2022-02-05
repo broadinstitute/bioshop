@@ -23,21 +23,20 @@ class VariantToVector(object):
     
     def process_call(self, call_info=None):
         (pre, post) = self.get_reference_context(call_info=call_info)
-        gt_counts = call_info['gt_counts']
-        gt_inps = {}
+        gt_list = call_info['gt_list']
+        gt_inps = []
         ref_key = (call_info['ref'], call_info['ref'])
-        for gt in gt_counts:
+        for gt in gt_list:
             if (gt == ('.', '.')) or (gt == ref_key):
-                gt_inps[gt] = None
+                gt_inps.append(None)
                 continue
             gt_ref = [f"{pre}{var if var != '.' else call.REF}{post}" for var in gt]
             if set(gt_ref[0] + gt_ref[1]) - set('AGTC'):
                 gt_ref = None
             else:
                 gt_ref = self.tokenizer.tokenize(gt_ref)
-            gt_inps[gt] = gt_ref
-        call_info['gt_inps'] = gt_inps
-        return call_info
+            gt_inps.append(gt_ref)
+        return gt_inps
 
 class Batcher(object):
     def __init__(self, model=None, batch_size=None):

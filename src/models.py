@@ -1,11 +1,37 @@
-import numpy as np
+import ctypes
 import torch
+import numpy as np
 from transformers import BertForSequenceClassification, BertTokenizer
 
 def get_base_model_path(klen=3):
     assert klen in (3, 4, 5, 6)
     model_path = f"armheb/DNA_bert_{klen}"
     return model_path
+
+class ModelInputStruct(ctypes.Structure):
+    _fields_ = [
+        ('input_ids', ctypes.c_int * 512), 
+        ('attention_mask', ctypes.c_int * 512),
+        ('token_type_ids', ctypes.c_int * 512),
+        ('call_id', ctypes.c_int),
+        ('genotype_id', ctypes.c_int),
+    ]
+
+    def __init__(self, **kw):
+        c_cast = lambda it: np.ctypeslib.as_ctypes(it) if isinstance(it, np.ndarray) else it
+        kw = {key: c_cast(val) for (key, val) in kw.items()}
+        super().__init__(**kw)
+
+    def as_numpy(self):
+        arrays = [
+            np.ctypeslib.as_array(self.input_ids),
+            np.ctypeslib.as_array(self.attention_mask),
+            np.ctypeslib.as_array(self.token_type_ids)
+        ]
+        return np.array(arrays)
+
+    def get_key(self):
+        return (self.call_id, self.genotype_id)
 
 class VariantFilterModel(object):
     DefaultLabels = ("SNP_TP", "SNP_FP", "INDEL_TP", "INDEL_FP")
@@ -67,15 +93,15 @@ class VariantTokenizer(object):
         toks = list(map(self.vocab.__getitem__, inp))
         toks += [0] * (self.max_length - len(toks))
         ret = {
-            "input_ids": toks
+            "input_ids": np.array(toks, dtype=ctypes.c_int),
         }
         return ret
 
     def tokenize(self, gt=None):
         ret = self.tokenize_only(gt=gt)
         toks = ret["input_ids"]
-        ret["attention_mask"] = list(map(lambda val: int(bool(val)), toks))
-        ret["token_type_ids"] = ([0] * self.max_length)
+        ret["attention_mask"] = np.array(toks != 0, dtype=ctypes.c_int)
+        ret["token_type_ids"] = np.zeros_like(toks, dtype=ctypes.c_int)
         return ret
 
 if __name__ == "__main__":

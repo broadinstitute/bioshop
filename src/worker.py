@@ -2,14 +2,18 @@ import os
 import re
 import queue
 import pprint
+import numpy as np
+import torch
 from tempfile import TemporaryDirectory
 from threading import Thread
 import multiprocessing.managers
 import multiprocessing as mp
-from . models import VariantTokenizer, VariantFilterModel
 from pyfaidx import Fasta
-from . predict import VariantToVector, Batcher
 from cyvcf2 import VCF
+
+from . models import VariantTokenizer, VariantFilterModel, ModelInputStruct
+from . predict import VariantToVector, Batcher
+from . cbuf import CircularBuffer
 
 class Worker(mp.Process):
     def __init__(self, manager=None, **kw):
@@ -45,7 +49,24 @@ class VariantToVectorWorker(Worker):
         self.tokenizer_config = tokenizer_config
         self.window = window
         self.in_q = self.manager.to_vectorizer
-        self.out_q = self.manager.to_model
+        self.to_model = self.manager.to_model
+        self.to_gather = self.manager.to_gather
+
+    def build_model_inputs(self, call_info=None, gt_inps=None):
+        call_id = call_info["call_id"]
+        results = []
+        model_inputs = []
+        for (genotype_id, gt_inp) in enumerate(gt_inps):
+            if gt_inp is None:
+                results.append(dict(skipped=True))
+                continue
+            results.append(dict(pending=True))
+            gt_inp["call_id"] = call_info["call_id"]
+            gt_inp["genotype_id"] = genotype_id
+            inp = ModelInputStruct(**gt_inp)
+            model_inputs.append(inp)
+        call_info["gt_results"] = results
+        return (call_info, model_inputs)
 
     def _run(self):
         ref = Fasta(self.ref_path)
@@ -59,16 +80,12 @@ class VariantToVectorWorker(Worker):
             except queue.Empty:
                 print(f"{self.__class__.__name__} loop: in_q empty. run={self.running}")
                 continue
-            #(chrom, pos) = (call_info['chrom'], call_info['pos'])
-            #site = f"{chrom}:{pos}"
-            #region = vcf(site)
-            #call = next(region)
-            #while call.POS < pos:
-                #call = next(region)
-            #assert call.POS == pos, f"{call.POS} != {pos}"
-            call_info = vectorizer.process_call(call_info)
-            self.out_q.put(call_info)
-            #self.in_q.task_done()
+
+            gt_inps = vectorizer.process_call(call_info)
+            (call_info, model_inputs) = self.build_model_inputs(call_info=call_info, gt_inps=gt_inps)
+            self.to_gather.put(call_info)
+            for inp in model_inputs:
+                self.to_model.push(inp)
             
 class ModelWorker(Worker):
     def __init__(self, model_path=None, batch_size=None, klen=None, **kw):
@@ -89,14 +106,26 @@ class ModelWorker(Worker):
             batcher.add_call(call)
             #self.in_q.task_done()
 
-    def watch_thread(self):
-        import time
-        while self.running:
-            sz = self.in_q.qsize()
-            print(f"q_size={sz}")
-            time.sleep(1)
+    def get_batch(self):
+        # XXX: need to flush somehow
+        batch = [self.in_q.pop() for _ in range(self.batch_size)]
+        keys = [ds.get_key() for ds in batch]
+        batch = np.array([ds.as_numpy() for ds in batch])
+        batch = batch.transpose([1, 0, 2])
+        batch = torch.tensor(batch)
+        headers = ('input_ids', 'attention_mask', 'token_type_ids')
+        batch = dict(zip(headers, batch))
+        return (keys, batch)
 
     def _run(self):
+        model = VariantFilterModel(model_path=self.model_path, klen=self.klen)
+
+        while self.running:
+            print(self.in_q.qsize())
+            (batch_keys, batch) = self.get_batch()
+            _ = model.predict(batch)
+
+    def __run(self):
         model = VariantFilterModel(model_path=self.model_path, klen=self.klen)
         batcher = Batcher(model=model, batch_size=self.batch_size)
         batch_thread = Thread(target=self.batch_thread, args=(batcher, ))
@@ -141,7 +170,7 @@ class GatherWorker(Worker):
                 call_info = self.in_q.get(timeout=1)
             except queue.Empty:
                 continue
-            self.post_process_call(call_info=call_info)
+            #self.post_process_call(call_info=call_info)
             #self.in_q.task_done()
             if call_id in self.ready_calls:
                 return
@@ -171,15 +200,14 @@ class ScatterWorker(Worker):
     def get_genotypes(self, call=None):
         # XXX: it might be possible to encode phase
         gt_bases = [tuple(re.split('[/|]', bases)) for bases in call.gt_bases]
-        gt_uniqs = set(gt_bases)
-        gt_counts = {gt: gt_bases.count(gt) for gt in gt_uniqs}
-        return gt_counts
+        gt_list = list(set(gt_bases))
+        return gt_list
 
     def process_call(self, call=None, call_id=None):
-        gt_counts = self.get_genotypes(call)
+        gt_list = self.get_genotypes(call)
         gt_inps = {}
         ref_key = (call.REF, call.REF)
-        for gt in gt_counts:
+        for gt in gt_list:
             if (gt == ('.', '.')) or (gt == ref_key):
                 gt_inps[gt] = None
                 continue
@@ -188,7 +216,7 @@ class ScatterWorker(Worker):
             "chrom": call.CHROM,
             "pos": call.POS,
             "locus": f"{call.CHROM}:{call.POS}",
-            "gt_counts": gt_counts,
+            "gt_list": gt_list,
             "var_type": call.var_type,
             "ref": call.REF,
         }
@@ -215,17 +243,16 @@ class ScatterWorker(Worker):
         for (call_id, call) in enumerate(vcf_in):
             self.push_call(call=call, call_id=call_id)
 
-def init_manager(batch_size=64, factor=8):
+def init_manager(batch_size=64, factor=64):
     manager = mp.managers.SyncManager()
     manager.start()
-    maxsize = None
     maxsize = int(round(batch_size * factor))
     manager.to_vectorizer = manager.Queue(maxsize=maxsize)
-    manager.to_model = manager.Queue(maxsize=maxsize)
-    manager.to_gather = manager.Queue(maxsize=maxsize)
+    manager.to_model = CircularBuffer(ctype=ModelInputStruct, size=maxsize)
+    manager.to_gather = manager.Queue()
     return manager
 
-def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, window=96, n_workers=8):
+def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, window=96, n_workers=2):
     manager = init_manager(batch_size=batch_size)
     tokenizer_config = dict(klen=klen)
     vtv_init = lambda: VariantToVectorWorker(
