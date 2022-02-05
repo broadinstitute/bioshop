@@ -96,16 +96,6 @@ class ModelWorker(Worker):
         self.in_q = self.manager.to_model
         self.out_q = self.manager.to_gather
 
-    def batch_thread(self, batcher=None):
-        while self.running:
-            try:
-                call = self.in_q.get(timeout=1)
-            except queue.Empty:
-                print(f"{self.__class__.__name__} thread: empty queue, run={self.running}")
-                continue
-            batcher.add_call(call)
-            #self.in_q.task_done()
-
     def get_batch(self):
         # XXX: need to flush somehow
         batch = [self.in_q.pop() for _ in range(self.batch_size)]
@@ -121,28 +111,14 @@ class ModelWorker(Worker):
         model = VariantFilterModel(model_path=self.model_path, klen=self.klen)
 
         while self.running:
-            print(self.in_q.qsize())
             (batch_keys, batch) = self.get_batch()
-            _ = model.predict(batch)
-
-    def __run(self):
-        model = VariantFilterModel(model_path=self.model_path, klen=self.klen)
-        batcher = Batcher(model=model, batch_size=self.batch_size)
-        batch_thread = Thread(target=self.batch_thread, args=(batcher, ))
-        batch_thread.start()
-        watch_thread = Thread(target=self.watch_thread)
-        watch_thread.start()
-
-        while self.running:
-            batcher.do_batch()
-            calls = batcher.get_completed_calls()
-            for call in calls:
-                self.out_q.put(call)
-        batch_thread.join()
-        batcher.flush()
-        calls = batcher.get_completed_calls()
-        for call in calls:
-            self.out_q.put(call)
+            outp = model.predict(batch)
+            result = []
+            for (log_odds, keys) in zip(outp['log_odds'], batch_keys):
+                ns = keys.copy()
+                ns['log_odds'] = log_odds.tolist()
+                result.append(ns)
+            self.out_q.put(result)
 
 class GatherWorker(Worker):
     def __init__(self, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, **kw):
@@ -160,7 +136,7 @@ class GatherWorker(Worker):
             for al in call_info['gt_scores']:
                 if call_info['gt_scores'][al] == None:
                     continue
-                call_info['gt_scores'][al]['score'] = call_info['gt_scores'][al]['logodds'][var_idx]
+                call_info['gt_scores'][al]['score'] = call_info['gt_scores'][al]['log_odds'][var_idx]
         call_id = call_info['call_id']
         self.ready_calls[call_id] = call_info
 
@@ -168,6 +144,7 @@ class GatherWorker(Worker):
         while True:
             try:
                 call_info = self.in_q.get(timeout=1)
+                print(call_info)
             except queue.Empty:
                 continue
             #self.post_process_call(call_info=call_info)
