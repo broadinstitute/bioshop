@@ -44,85 +44,8 @@ class Worker(mp.Process):
             time.sleep(1)
             self._run()
         os.chdir(pwd)
-
-class VariantToVectorWorker(Worker):
-    def __init__(self, ref_path=None, tokenizer_config=None, window=96, **kw):
-        super().__init__(**kw)
-        self.ref_path = ref_path
-        self.tokenizer_config = tokenizer_config
-        self.window = window
-        self.in_q = self.manager.to_vectorizer
-        self.to_model = self.manager.to_model
-        self.to_gather = self.manager.to_gather
-
-    def dispatch_site(self, site_info=None, gt_inps=None):
-        site_id = site_info.site_id
-        model_inputs = []
-        for (genotype_id, gt_inp) in gt_inps.items():
-            if gt_inp is None:
-                site_info.genotypes[genotype_id].status = 'skipped'
-                continue
-            gt_inp["site_id"] = site_info.site_id
-            gt_inp["genotype_id"] = genotype_id
-            inp = ModelInputStruct(**gt_inp)
-            model_inputs.append(inp)
-
-        # dispatch
-        self.to_gather.put(site_info)
-        for inp in model_inputs:
-            self.to_model.push(inp)
-
-    def _run(self):
-        ref = Fasta(self.ref_path)
-        tokenizer = VariantTokenizer(**self.tokenizer_config)
-        vectorizer = VariantToVector(ref=ref, tokenizer=tokenizer, window=self.window)
-
-        self._running.set()
-        while self.running:
-            try:
-                site_info = self.in_q.get(timeout=1)
-            except queue.Empty:
-                print(f"{self.__class__.__name__} loop: in_q empty. run={self.running}")
-                continue
-
-            gt_inps = vectorizer.process_site(site_info)
-            self.dispatch_site(site_info=site_info, gt_inps=gt_inps)
-            
-class ModelWorker(Worker):
-    def __init__(self, model_path=None, batch_size=None, klen=None, **kw):
-        super().__init__(**kw)
-        self.model_path = model_path
-        self.batch_size = batch_size
-        self.klen = klen
-        self.in_q = self.manager.to_model
-        self.out_q = self.manager.to_gather
-
-    def get_batch(self):
-        # XXX: need to flush somehow
-        batch = [self.in_q.pop() for _ in range(self.batch_size)]
-        keys = [ds.get_key() for ds in batch]
-        batch = np.array([ds.as_numpy() for ds in batch])
-        batch = batch.transpose([1, 0, 2])
-        batch = torch.tensor(batch)
-        headers = ('input_ids', 'attention_mask', 'token_type_ids')
-        batch = dict(zip(headers, batch))
-        return (keys, batch)
-
-    def _run(self):
-        model = VariantFilterModel(model_path=self.model_path, klen=self.klen)
-
-        while self.running:
-            (batch_keys, batch) = self.get_batch()
-            outp = model.predict(batch)
-            result = []
-            assert len(outp['log_odds']) == len(batch_keys)
-            for (log_odds, keys) in zip(outp['log_odds'], batch_keys):
-                ns = keys.copy()
-                ns['log_odds'] = log_odds.tolist()
-                ns['status'] = 'called'
-                gt = Genotype(**ns)
-                result.append(gt)
-            self.out_q.put(result)
+        msg = f"{self.__class__.__name__} shutting down"
+        print(msg)
 
 class GatherWorker(Worker):
     def __init__(self, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, **kw):
@@ -152,18 +75,23 @@ class GatherWorker(Worker):
 
     def wait_on(self, site_id=None):
         while True:
+            site = self.site_cache.get(site_id)
+            if site and not site.is_pending:
+                return self.site_cache.pop(site_id)
+
             try:
                 info = self.in_q.get(timeout=1)
             except queue.Empty:
+                print(f"{self.__class__.__name__} wait_in(#{site_id}): in_q empty. outstanding={len(self.site_cache)}")
+                pending = [x.site_id for x in self.site_cache.values() if x.is_pending]
+                print(pending)
                 continue
+            self.in_q.task_done()
             if type(info) == list:
                 for item in info:
                     self.process_item(item)
             else:
                 self.process_item(info)
-            site = self.site_cache.get(site_id)
-            if site and not site.is_pending:
-                return self.site_cache.pop(site_id)
 
     def _run(self):
         vcf_in = VCF(self.vcf_in_path)
@@ -176,7 +104,111 @@ class GatherWorker(Worker):
             assert site.POS == site_info.pos
             assert site.CHROM == site_info.chrom
             print(site_info)
+            if site_id == 5000:
+                break
+        self.manager.flush_model.set()
+        self.manager.flush_vectorizer.set()
 
+class ModelWorker(Worker):
+    def __init__(self, model_path=None, batch_size=None, klen=None, **kw):
+        super().__init__(**kw)
+        self.model_path = model_path
+        self.batch_size = batch_size
+        self.klen = klen
+        self.in_q = self.manager.to_model
+        self.out_q = self.manager.to_gather
+        self.processed_count = 0
+
+    def get_batch(self, timeout=5):
+        # XXX: need to flush somehow
+        batch = []
+        while (len(batch) < self.batch_size):
+            try:
+                item = self.in_q.pop(timeout=timeout)
+            except TimeoutError:
+                print(f"{self.__class__.__name__} get_batch: buf={self.in_q.qsize.value}, processed={self.processed_count}")
+                break
+            batch.append(item)
+        if not batch:
+            return (None, None)
+        keys = [ds.get_key() for ds in batch]
+        batch = np.array([ds.as_numpy() for ds in batch])
+        batch = batch.transpose([1, 0, 2])
+        batch = torch.tensor(batch)
+        headers = ('input_ids', 'attention_mask', 'token_type_ids')
+        batch = dict(zip(headers, batch))
+        return (keys, batch)
+
+    def _run(self):
+        model = VariantFilterModel(model_path=self.model_path, klen=self.klen)
+
+        while self.running:
+            (batch_keys, batch) = self.get_batch()
+            if batch:
+                outp = model.predict(batch)
+                result = []
+                assert len(outp['log_odds']) == len(batch_keys)
+                for (log_odds, keys) in zip(outp['log_odds'], batch_keys):
+                    ns = keys.copy()
+                    ns['log_odds'] = log_odds.tolist()
+                    ns['status'] = 'called'
+                    gt = Genotype(**ns)
+                    result.append(gt)
+                    self.processed_count += 1
+                self.out_q.put(result)
+            #
+            if self.in_q.qsize.value == 0 and self.manager.flush_model.is_set():
+                break
+
+class VariantToVectorWorker(Worker):
+    def __init__(self, ref_path=None, tokenizer_config=None, window=96, **kw):
+        super().__init__(**kw)
+        self.ref_path = ref_path
+        self.tokenizer_config = tokenizer_config
+        self.window = window
+        self.in_q = self.manager.to_vectorizer
+        self.to_model = self.manager.to_model
+        self.to_gather = self.manager.to_gather
+        self.sent_to_model = 0
+
+    def dispatch_site(self, site_info=None, gt_inps=None):
+        site_id = site_info.site_id
+        model_inputs = []
+        for (genotype_id, gt_inp) in gt_inps.items():
+            if gt_inp is None:
+                site_info.genotypes[genotype_id].status = 'skipped'
+                continue
+            gt_inp["site_id"] = site_info.site_id
+            gt_inp["genotype_id"] = genotype_id
+            inp = ModelInputStruct(**gt_inp)
+            model_inputs.append(inp)
+        assert model_inputs or site_info.is_pending == False
+
+        # dispatch
+        self.to_gather.put(site_info)
+        for inp in model_inputs:
+            self.sent_to_model += 1
+            self.to_model.push(inp)
+
+    def _run(self):
+        ref = Fasta(self.ref_path)
+        tokenizer = VariantTokenizer(**self.tokenizer_config)
+        vectorizer = VariantToVector(ref=ref, tokenizer=tokenizer, window=self.window)
+
+        self._running.set()
+        while self.running:
+            try:
+                site_info = self.in_q.get(timeout=1)
+                self.in_q.task_done()
+            except queue.Empty:
+                if self.manager.flush_vectorizer.is_set():
+                    break
+                print(f"{self.__class__.__name__} loop: in_q empty. buf={self.to_model.qsize.value}" + f" sent={self.sent_to_model}")
+                continue
+
+            gt_inps = vectorizer.process_site(site_info)
+            self.dispatch_site(site_info=site_info, gt_inps=gt_inps)
+            
 class ScatterWorker(Worker):
     def __init__(self, vcf_in_path=None, vcf_idx_path=None, **kw):
         super().__init__(**kw)
@@ -204,14 +236,20 @@ class ScatterWorker(Worker):
 
         for (site_id, site) in enumerate(vcf_in):
             self.push_site(site=site, site_id=site_id)
+            if site_id == 5000:
+                break
+        self.to_vectorizer_que.join()
+        self.to_gather_que.join()
 
 def init_manager(batch_size=64, factor=4):
     manager = mp.managers.SyncManager()
     manager.start()
     maxsize = int(round(batch_size * factor))
-    manager.to_vectorizer = manager.Queue(maxsize=maxsize)
+    manager.to_vectorizer = manager.JoinableQueue(maxsize=maxsize)
+    manager.flush_vectorizer = manager.Event()
     manager.to_model = CircularBuffer(ctype=ModelInputStruct, size=maxsize)
-    manager.to_gather = manager.Queue()
+    manager.flush_model = manager.Event()
+    manager.to_gather = manager.JoinableQueue()
     return manager
 
 def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, window=96, n_workers=1):

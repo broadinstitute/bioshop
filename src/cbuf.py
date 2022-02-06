@@ -21,11 +21,12 @@ class CircularBuffer(object):
             self.qsize.value += 1
             self.buffer_cv.notify_all()
 
-    def pop(self):
+    def pop(self, timeout=None):
         with self.buffer_cv:
             is_empty = lambda: self.qsize.value == 0
             while is_empty():
-                self.buffer_cv.wait(timeout=1)
+                if not self.buffer_cv.wait(timeout=timeout):
+                    raise TimeoutError(timeout)
             src = self.buffer[self.read_ptr.value]
             # critical, don't forget to copy the data out!
             item = type(src)()

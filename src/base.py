@@ -114,7 +114,7 @@ class Genotype(BaseObject):
         self.log_odds = log_odds
 
     def __repr__(self):
-        msg = f"{self.__class__.__name__}<#{self.site_id},{self.genotype_id}> pending={self.is_pending}, alleles={str.join(', ', self.bases)}"
+        msg = f"{self.__class__.__name__}<#{self.site_id},{self.genotype_id}> pending={self.is_pending}, alleles={str.join(', ', self.bases)}, log_odds={self.log_odds}"
         return msg
 
     @property
