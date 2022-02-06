@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import queue
 import pprint
 import numpy as np
@@ -40,6 +41,7 @@ class Worker(mp.Process):
             self._running.set()
             msg = f"Starting {self.__class__.__name__} worker run={self.running}, tmpdir={tmpdir}"
             print(msg)
+            time.sleep(1)
             self._run()
         os.chdir(pwd)
 
@@ -53,19 +55,22 @@ class VariantToVectorWorker(Worker):
         self.to_model = self.manager.to_model
         self.to_gather = self.manager.to_gather
 
-    def build_model_inputs(self, site_info=None, gt_inps=None):
+    def dispatch_site(self, site_info=None, gt_inps=None):
         site_id = site_info.site_id
-        results = []
         model_inputs = []
-        for (genotype_id, gt_inp) in enumerate(gt_inps):
+        for (genotype_id, gt_inp) in gt_inps.items():
             if gt_inp is None:
-                site_info.genotypes[genotype_id].status = "skipped"
+                site_info.genotypes[genotype_id].status = 'skipped'
                 continue
             gt_inp["site_id"] = site_info.site_id
             gt_inp["genotype_id"] = genotype_id
             inp = ModelInputStruct(**gt_inp)
             model_inputs.append(inp)
-        return (site_info, model_inputs)
+
+        # dispatch
+        self.to_gather.put(site_info)
+        for inp in model_inputs:
+            self.to_model.push(inp)
 
     def _run(self):
         ref = Fasta(self.ref_path)
@@ -81,10 +86,7 @@ class VariantToVectorWorker(Worker):
                 continue
 
             gt_inps = vectorizer.process_site(site_info)
-            (site_info, model_inputs) = self.build_model_inputs(site_info=site_info, gt_inps=gt_inps)
-            self.to_gather.put(site_info)
-            for inp in model_inputs:
-                self.to_model.push(inp)
+            self.dispatch_site(site_info=site_info, gt_inps=gt_inps)
             
 class ModelWorker(Worker):
     def __init__(self, model_path=None, batch_size=None, klen=None, **kw):
@@ -111,13 +113,14 @@ class ModelWorker(Worker):
 
         while self.running:
             (batch_keys, batch) = self.get_batch()
-            print("predict")
             outp = model.predict(batch)
             result = []
+            assert len(outp['log_odds']) == len(batch_keys)
             for (log_odds, keys) in zip(outp['log_odds'], batch_keys):
                 ns = keys.copy()
                 ns['log_odds'] = log_odds.tolist()
-                gt = Genotype(status="called", **ns)
+                ns['status'] = 'called'
+                gt = Genotype(**ns)
                 result.append(gt)
             self.out_q.put(result)
 
@@ -128,34 +131,39 @@ class GatherWorker(Worker):
         self.vcf_idx_path = vcf_idx_path
         self.vcf_out_path = vcf_out_path
         self.in_q = self.manager.to_gather
-        self.ready_sites = {}
+        self.site_cache = {}
+        self.results_cache = {}
 
-    def post_process_site(self, site_info=None):
-        if 'skipped' not in site_info:
-            var_type = site_info["var_type"]
-            var_idx = 0 if var_type == "snp" else 1
-            for al in site_info['gt_scores']:
-                if site_info['gt_scores'][al] == None:
-                    continue
-                site_info['gt_scores'][al]['score'] = site_info['gt_scores'][al]['log_odds'][var_idx]
-        site_id = site_info['site_id']
-        self.ready_sites[site_id] = site_info
+    def process_item(self, item=None):
+        site_id = item.site_id
+        if isinstance(item, Site):
+            if site_id not in self.site_cache:
+                self.site_cache[site_id] = item
+            else:
+                site = self.site_cache[site_id]
+                site.update(item)
+            return
+        if isinstance(item, Genotype):
+            # XXX: place holder for place holder
+            site = self.site_cache.get(site_id)
+            site.update_genotype(item)
+            return
+        raise ValueError(type(item))
 
     def wait_on(self, site_id=None):
         while True:
             try:
-                site_info = self.in_q.get(timeout=1)
-                if type(site_info) == list:
-                    print(site_info[-1].site_id)
-                else:
-                    print(site_info.site_id)
-                    continue
+                info = self.in_q.get(timeout=1)
             except queue.Empty:
                 continue
-            #self.post_process_site(site_info=site_info)
-            #self.in_q.task_done()
-            if site_id in self.ready_sites:
-                return
+            if type(info) == list:
+                for item in info:
+                    self.process_item(item)
+            else:
+                self.process_item(info)
+            site = self.site_cache.get(site_id)
+            if site and not site.is_pending:
+                return self.site_cache.pop(site_id)
 
     def _run(self):
         vcf_in = VCF(self.vcf_in_path)
@@ -163,13 +171,11 @@ class GatherWorker(Worker):
             vcf_in.set_index(self.vcf_idx_path)
 
         for (site_id, site) in enumerate(vcf_in):
-            if site_id not in self.ready_sites:
-                self.wait_on(site_id=site_id)
-            site_info = self.ready_sites.pop(site_id)
-            assert site_id == site_info['site_id']
-            assert site.POS == site_info['pos']
-            assert site.CHROM == site_info['chrom']
-            #print(site_id, site.CHROM, site.POS)
+            site_info = self.wait_on(site_id=site_id)
+            assert site_id == site_info.site_id
+            assert site.POS == site_info.pos
+            assert site.CHROM == site_info.chrom
+            print(site_info)
 
 class ScatterWorker(Worker):
     def __init__(self, vcf_in_path=None, vcf_idx_path=None, **kw):
@@ -182,11 +188,11 @@ class ScatterWorker(Worker):
     def push_site(self, site=None, site_id=None):
         site_info = Site.load_from_site(site=site, site_id=site_id)
         if not (site.is_snp or site.is_indel):
-            site_info.status = "skipped"
+            site_info.set_site_status("skipped")
             self.to_gather_que.put(site_info)
             return
         if site.FILTER:
-            site_info.status = "skipped"
+            site_info.set_site_status("skipped")
             self.to_gather_que.put(site_info)
             return
         self.to_vectorizer_que.put(site_info)
@@ -199,7 +205,7 @@ class ScatterWorker(Worker):
         for (site_id, site) in enumerate(vcf_in):
             self.push_site(site=site, site_id=site_id)
 
-def init_manager(batch_size=64, factor=64):
+def init_manager(batch_size=64, factor=4):
     manager = mp.managers.SyncManager()
     manager.start()
     maxsize = int(round(batch_size * factor))
@@ -208,7 +214,7 @@ def init_manager(batch_size=64, factor=64):
     manager.to_gather = manager.Queue()
     return manager
 
-def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, window=96, n_workers=2):
+def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, window=96, n_workers=1):
     manager = init_manager(batch_size=batch_size)
     tokenizer_config = dict(klen=klen)
     vtv_init = lambda: VariantToVectorWorker(
@@ -222,7 +228,7 @@ def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, 
     scatter_worker = ScatterWorker(manager=manager, vcf_in_path=vcf_in_path, vcf_idx_path=vcf_idx_path)
     gather_worker = GatherWorker(manager=manager, vcf_in_path=vcf_in_path, vcf_idx_path=vcf_idx_path, vcf_out_path=vcf_out_path)
     workers = vtv_workers + [model_worker, scatter_worker, gather_worker]
-    for worker in workers:
+    for worker in workers[::-1]:
         worker.start()
     #
     for worker in workers:

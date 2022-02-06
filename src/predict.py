@@ -19,9 +19,9 @@ class VariantToVector(object):
     
     def process_site(self, site_info=None):
         (pre, post) = self.get_reference_context(site_info=site_info)
-        gt_toks = []
+        gt_toks = {}
         ref_bases = (site_info.ref, site_info.ref)
-        for gt in site_info.genotypes:
+        for (genotype_id, gt) in site_info.genotypes.items():
             if (gt.bases == ('.', '.')) or (gt.bases == ref_bases):
                 gt_ref = None
             else:
@@ -30,5 +30,5 @@ class VariantToVector(object):
                     gt_ref = None
                 else:
                     gt_ref = self.tokenizer.tokenize(gt_ref)
-            gt_toks.append(gt_ref)
+            gt_toks[genotype_id] = gt_ref
         return gt_toks
