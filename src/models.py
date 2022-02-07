@@ -46,9 +46,7 @@ class VariantFilterModel(object):
         self.num_labels = len(self.labels)
         self.model_path = model_path
         self.device = device or self.DefaultDevice
-        self.model = BertForSequenceClassification.from_pretrained(self.model_path, num_labels=self.num_labels).to(device=self.device)
-        self.model.to(self.device)
-        self.model.eval()
+        self.model = BertForSequenceClassification.from_pretrained(self.model_path, num_labels=self.num_labels).eval().to(device=self.device)
         self.softmax_op = torch.nn.Softmax(dim=-1)
 
     def predict(self, inp):
@@ -57,12 +55,12 @@ class VariantFilterModel(object):
         inp = {key: val.to(device=self.device) for (key, val) in inp.items()}
         with torch.no_grad():
             outp = self.model(**inp)
-        logits = outp["logits"]
-        # XXX: hard wired for 2x2 classes
-        logits = logits.reshape(logits.shape[0], 2, 2)
-        softmax = self.softmax_op.forward(logits)
-        argmax = torch.argmax(softmax, dim=1)[:, None]
-        log_odds = torch.log(softmax[:, :, 0] / softmax[:, :, 1])
+            logits = outp["logits"]
+            # XXX: hard wired for 2x2 classes
+            logits = logits.reshape(logits.shape[0], 2, 2)
+            softmax = self.softmax_op.forward(logits)
+            argmax = torch.argmax(softmax, dim=1)[:, None]
+            log_odds = torch.log(softmax[:, :, 0] / softmax[:, :, 1])
         ret = dict(
             logits=logits.cpu().numpy(),
             softmax=softmax.cpu().numpy(),

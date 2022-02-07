@@ -11,6 +11,7 @@ import multiprocessing.managers
 import multiprocessing as mp
 from pyfaidx import Fasta
 from cyvcf2 import VCF
+from tqdm import tqdm
 
 from . models import VariantTokenizer, VariantFilterModel, ModelInputStruct
 from . predict import VariantToVector
@@ -48,12 +49,13 @@ class Worker(mp.Process):
         print(msg)
 
 class GatherWorker(Worker):
-    def __init__(self, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, **kw):
+    def __init__(self, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, region=None, **kw):
         super().__init__(**kw)
         self.vcf_in_path = vcf_in_path
         self.vcf_idx_path = vcf_idx_path
         self.vcf_out_path = vcf_out_path
         self.in_q = self.manager.to_gather
+        self.region = region
         self.site_cache = {}
         self.results_cache = {}
 
@@ -82,9 +84,9 @@ class GatherWorker(Worker):
             try:
                 info = self.in_q.get(timeout=1)
             except queue.Empty:
-                print(f"{self.__class__.__name__} wait_in(#{site_id}): in_q empty. outstanding={len(self.site_cache)}")
-                pending = [x.site_id for x in self.site_cache.values() if x.is_pending]
-                print(pending)
+                #print(f"{self.__class__.__name__} wait_in(#{site_id}): in_q empty. outstanding={len(self.site_cache)}")
+                #pending = [x.site_id for x in self.site_cache.values() if x.is_pending]
+                #print(pending)
                 continue
             self.in_q.task_done()
             if type(info) == list:
@@ -93,19 +95,49 @@ class GatherWorker(Worker):
             else:
                 self.process_item(info)
 
+    def progress_bar(self, vcf=None):
+        seqlen_map = dict(zip(vcf.seqnames, vcf.seqlens))
+        ns = dict(
+            chrom=None,
+            pbar=None,
+            last_pos=0
+        )
+        def update(chrom, pos):
+            last_chrom = ns['chrom']
+            pbar = ns['pbar']
+            last_pos = ns['last_pos']
+            if last_chrom != chrom:
+                seqlen = seqlen_map[chrom]
+                if pbar:
+                    pbar.close()
+                pbar = tqdm(
+                    total=seqlen,
+                    desc=chrom,
+                    unit="base",
+                    unit_scale=True,
+                    colour='green'
+                )
+                ns['chrom'] = chrom
+                ns['pbar'] = pbar
+            pbar.update(pos - last_pos)
+            ns['last_pos'] = pos
+        return update
+
     def _run(self):
         vcf_in = VCF(self.vcf_in_path)
+        pbar = self.progress_bar(vcf_in)
         if self.vcf_idx_path:
             vcf_in.set_index(self.vcf_idx_path)
+        if self.region:
+            vcf_in = vcf_in(self.region)
 
         for (site_id, site) in enumerate(vcf_in):
             site_info = self.wait_on(site_id=site_id)
             assert site_id == site_info.site_id
             assert site.POS == site_info.pos
             assert site.CHROM == site_info.chrom
-            print(site_info)
-            if site_id == 5000:
-                break
+            pbar(site.CHROM, site.POS)
+            #print(site_info)
         self.manager.flush_model.set()
         self.manager.flush_vectorizer.set()
 
@@ -117,16 +149,14 @@ class ModelWorker(Worker):
         self.klen = klen
         self.in_q = self.manager.to_model
         self.out_q = self.manager.to_gather
-        self.processed_count = 0
 
-    def get_batch(self, timeout=5):
-        # XXX: need to flush somehow
+    def get_batch(self, timeout=1):
         batch = []
         while (len(batch) < self.batch_size):
             try:
                 item = self.in_q.pop(timeout=timeout)
             except TimeoutError:
-                print(f"{self.__class__.__name__} get_batch: buf={self.in_q.qsize.value}, processed={self.processed_count}")
+                #print(f"{self.__class__.__name__} get_batch: buf={self.in_q.qsize.value}")
                 break
             batch.append(item)
         if not batch:
@@ -154,10 +184,12 @@ class ModelWorker(Worker):
                     ns['status'] = 'called'
                     gt = Genotype(**ns)
                     result.append(gt)
-                    self.processed_count += 1
                 self.out_q.put(result)
             #
-            if self.in_q.qsize.value == 0 and self.manager.flush_model.is_set():
+            if (
+                (self.manager.flush_model.is_set()) and \
+                (self.in_q.qsize.value == 0)
+            ):
                 break
 
 class VariantToVectorWorker(Worker):
@@ -169,7 +201,6 @@ class VariantToVectorWorker(Worker):
         self.in_q = self.manager.to_vectorizer
         self.to_model = self.manager.to_model
         self.to_gather = self.manager.to_gather
-        self.sent_to_model = 0
 
     def dispatch_site(self, site_info=None, gt_inps=None):
         site_id = site_info.site_id
@@ -187,7 +218,6 @@ class VariantToVectorWorker(Worker):
         # dispatch
         self.to_gather.put(site_info)
         for inp in model_inputs:
-            self.sent_to_model += 1
             self.to_model.push(inp)
 
     def _run(self):
@@ -203,19 +233,20 @@ class VariantToVectorWorker(Worker):
             except queue.Empty:
                 if self.manager.flush_vectorizer.is_set():
                     break
-                print(f"{self.__class__.__name__} loop: in_q empty. buf={self.to_model.qsize.value}" + f" sent={self.sent_to_model}")
+                #print(f"{self.__class__.__name__} loop: in_q empty. buf={self.to_model.qsize.value}")
                 continue
 
             gt_inps = vectorizer.process_site(site_info)
             self.dispatch_site(site_info=site_info, gt_inps=gt_inps)
             
 class ScatterWorker(Worker):
-    def __init__(self, vcf_in_path=None, vcf_idx_path=None, **kw):
+    def __init__(self, vcf_in_path=None, vcf_idx_path=None, region=None, **kw):
         super().__init__(**kw)
         self.vcf_in_path = vcf_in_path
         self.vcf_idx_path = vcf_idx_path
         self.to_vectorizer_que = self.manager.to_vectorizer
         self.to_gather_que = self.manager.to_gather
+        self.region = region
 
     def push_site(self, site=None, site_id=None):
         site_info = Site.load_from_site(site=site, site_id=site_id)
@@ -233,15 +264,16 @@ class ScatterWorker(Worker):
         vcf_in = VCF(self.vcf_in_path)
         if self.vcf_idx_path:
             vcf_in.set_index(self.vcf_idx_path)
+        if self.region:
+            vcf_in = vcf_in(self.region)
 
         for (site_id, site) in enumerate(vcf_in):
             self.push_site(site=site, site_id=site_id)
-            if site_id == 5000:
-                break
+
         self.to_vectorizer_que.join()
         self.to_gather_que.join()
 
-def init_manager(batch_size=64, factor=4):
+def init_manager(batch_size=None, factor=4):
     manager = mp.managers.SyncManager()
     manager.start()
     maxsize = int(round(batch_size * factor))
@@ -252,7 +284,7 @@ def init_manager(batch_size=64, factor=4):
     manager.to_gather = manager.JoinableQueue()
     return manager
 
-def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, window=96, n_workers=1):
+def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, window=96, region=None, n_workers=1):
     manager = init_manager(batch_size=batch_size)
     tokenizer_config = dict(klen=klen)
     vtv_init = lambda: VariantToVectorWorker(
@@ -263,8 +295,8 @@ def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, 
     )
     vtv_workers = [vtv_init() for x in range(n_workers)]
     model_worker = ModelWorker(manager=manager, model_path=model_path, batch_size=batch_size, klen=klen)
-    scatter_worker = ScatterWorker(manager=manager, vcf_in_path=vcf_in_path, vcf_idx_path=vcf_idx_path)
-    gather_worker = GatherWorker(manager=manager, vcf_in_path=vcf_in_path, vcf_idx_path=vcf_idx_path, vcf_out_path=vcf_out_path)
+    scatter_worker = ScatterWorker(manager=manager, vcf_in_path=vcf_in_path, vcf_idx_path=vcf_idx_path, region=region)
+    gather_worker = GatherWorker(manager=manager, vcf_in_path=vcf_in_path, vcf_idx_path=vcf_idx_path, vcf_out_path=vcf_out_path, region=region)
     workers = vtv_workers + [model_worker, scatter_worker, gather_worker]
     for worker in workers[::-1]:
         worker.start()

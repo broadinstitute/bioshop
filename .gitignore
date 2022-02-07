@@ -1,2 +1,5 @@
+*.vcf*
+*.local*
 __pycache__
 .*.sw?*
+tarpit
