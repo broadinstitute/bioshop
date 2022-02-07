@@ -10,7 +10,7 @@ from threading import Thread
 import multiprocessing.managers
 import multiprocessing as mp
 from pyfaidx import Fasta
-from cyvcf2 import VCF
+from cyvcf2 import VCF, Writer
 from tqdm import tqdm
 
 from . models import VariantTokenizer, VariantFilterModel, ModelInputStruct
@@ -128,6 +128,12 @@ class GatherWorker(Worker):
         pbar = self.progress_bar(vcf_in)
         if self.vcf_idx_path:
             vcf_in.set_index(self.vcf_idx_path)
+
+        vcf_in.add_info_to_header({'ID': 'BLOD', 'Description': 'BERT LOD', 'Type':'Float', 'Number': '1'})
+        vcf_in.add_filter_to_header({'ID': 'BERT', 'Description': 'mostly dnabert'})
+        vcf_in.add_format_to_header({'ID': 'BT', 'Description': 'BERT LOD', 'Type':'Float', 'Number': '1'})
+        vcf_out = Writer(self.vcf_out_path, vcf_in)
+
         if self.region:
             vcf_in = vcf_in(self.region)
 
@@ -136,8 +142,13 @@ class GatherWorker(Worker):
             assert site_id == site_info.site_id
             assert site.POS == site_info.pos
             assert site.CHROM == site_info.chrom
+            site = site_info.call_site(site)
+            vcf_out.write_record(site)
             pbar(site.CHROM, site.POS)
             #print(site_info)
+
+        vcf_out.close()
+        vcf_in.close()
         self.manager.flush_model.set()
         self.manager.flush_vectorizer.set()
 
@@ -254,10 +265,12 @@ class ScatterWorker(Worker):
             site_info.set_site_status("skipped")
             self.to_gather_que.put(site_info)
             return
+        """
         if site.FILTER:
             site_info.set_site_status("skipped")
             self.to_gather_que.put(site_info)
             return
+        """
         self.to_vectorizer_que.put(site_info)
     
     def _run(self):

@@ -1,4 +1,5 @@
 import re
+import numpy as np
 
 class BaseObject(object):
     pass
@@ -37,6 +38,7 @@ class Site(BaseObject):
                 site_id=site_id, 
                 genotype_id=genotype_id,
                 bases=bases,
+                ref=site.REF,
                 var_type=var_type,
             )
             genotypes[genotype_id] = gt
@@ -53,6 +55,37 @@ class Site(BaseObject):
         )
         return site_obj
 
+    def call_site(self, site=None):
+        gt_map = {gt.bases: gt for gt in self.genotypes.values()}
+        scores = []
+        nc = 0
+        for (idx, bases) in enumerate(site.gt_bases):
+            bases = tuple(re.split('[/|]', bases))
+            gt = gt_map[bases]
+            if not gt.log_odds:
+                nc += 1
+                scores.append(0)
+                continue
+            if gt.is_snp:
+                score = gt.log_odds[0]
+            else:
+                assert gt.is_indel
+                score = gt.log_odds[1]
+            #if score < 0:
+                #site.genotypes[idx] = ([-1] * site.ploidy) + [False]
+            scores.append(score)
+        site.set_format("BT", np.array(scores))
+        if len(scores) != nc:
+            all_fail = all([score < 0 for score in scores if score != 0])
+            if all_fail:
+                site.FILTER = "BERT"
+            else:
+                site.FILTER = "PASS"
+            best_score = max([score for score in scores if score != 0])
+            site.INFO["BLOD"] = best_score
+        site.genotypes = site.genotypes
+        return site
+                
     @property
     def is_placeholder(self):
         return (self.chrom is None) or \
