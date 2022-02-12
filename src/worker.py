@@ -137,18 +137,20 @@ class GatherWorker(Worker):
         if self.region:
             vcf_in = vcf_in(self.region)
 
-        for (site_id, site) in enumerate(vcf_in):
-            site_info = self.wait_on(site_id=site_id)
-            assert site_id == site_info.site_id
-            assert site.POS == site_info.pos
-            assert site.CHROM == site_info.chrom
-            site = site_info.call_site(site)
-            vcf_out.write_record(site)
-            pbar(site.CHROM, site.POS)
-            #print(site_info)
+        try:
+            for (site_id, site) in enumerate(vcf_in):
+                site_info = self.wait_on(site_id=site_id)
+                assert site_id == site_info.site_id
+                assert site.POS == site_info.pos
+                assert site.CHROM == site_info.chrom
+                site = site_info.call_site(site)
+                vcf_out.write_record(site)
+                pbar(site.CHROM, site.POS)
+                #print(site_info)
+        finally:
+            vcf_out.close()
+            vcf_in.close()
 
-        vcf_out.close()
-        vcf_in.close()
         self.manager.flush_model.set()
         self.manager.flush_vectorizer.set()
 

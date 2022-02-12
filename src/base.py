@@ -28,7 +28,7 @@ class Site(BaseObject):
         # XXX: it might be possible to encode phase
         seen = set()
         genotypes = {}
-        for (bases, var_type) in zip(site.gt_bases, site.gt_types):
+        for bases in site.gt_bases:
             bases = tuple(re.split('[/|]', bases))
             if bases in seen:
                 continue
@@ -39,7 +39,6 @@ class Site(BaseObject):
                 genotype_id=genotype_id,
                 bases=bases,
                 ref=site.REF,
-                var_type=var_type,
             )
             genotypes[genotype_id] = gt
 
@@ -132,7 +131,6 @@ class Genotype(BaseObject):
     def __init__(self,
         site_id=None,
         genotype_id=None,
-        var_type=None,
         ref=None,
         bases=None,
         status='pending',
@@ -140,7 +138,6 @@ class Genotype(BaseObject):
     ):
         self.site_id = site_id
         self.genotype_id = genotype_id
-        self.var_type = var_type
         self.ref = ref
         self.bases = bases
         self.status = status
@@ -153,11 +150,6 @@ class Genotype(BaseObject):
     @property
     def is_pending(self):
         return self.status == "pending"
-
-    @property
-    def is_homref(self):
-        # XXX: hardwired
-        return self.var_type == 0
 
     @property
     def is_symbolic(self):
