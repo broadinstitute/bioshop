@@ -1,7 +1,8 @@
 import ctypes
 import torch
 import numpy as np
-from transformers import BertForSequenceClassification, BertTokenizer
+from transformers import BertForSequenceClassification, BertTokenizer, BertConfig, BertModel
+from multimodal_transformers.model import BertWithTabular, TabularConfig
 
 def get_base_model_path(klen=3):
     assert klen in (3, 4, 5, 6)
@@ -49,13 +50,39 @@ class VariantFilterModel(object):
         self.model = BertForSequenceClassification.from_pretrained(self.model_path, num_labels=self.num_labels).eval().to(device=self.device)
         self.softmax_op = torch.nn.Softmax(dim=-1)
 
+class TabularVariantFilterModel(VariantFilterModel):
+    def __init__(self, klen=None, labels=None, model_path=None, device=None, bert_config=None):
+        assert klen in (3, 4, 5, 6)
+        self.klen = klen
+        if model_path is None:
+            model_path = get_base_model_path(klen=self.klen)
+        self.labels = labels or self.DefaultLabels
+        self.num_labels = len(self.labels)
+        self.model_path = model_path
+        self.device = device or self.DefaultDevice
+        if bert_config is None:
+            bert_config = BertConfig(
+                vocab_size=4 ** self.klen + 5
+            )
+        self.bert_config = bert_config
+        self.tabular_config = TabularConfig(
+            combine_feat_method="mlp_on_concatenated_cat_and_numerical_feats_then_concat",
+            cat_feat_dim=5,
+            numerical_feat_dim=5,
+            numerical_bn=True,
+            num_labels=4,
+        )
+        self.bert_config.tabular_config = self.tabular_config
+        self.model = BertWithTabular.from_pretrained(self.model_path, config=self.bert_config).eval().to(device=self.device)
+        self.softmax_op = torch.nn.Softmax(dim=-1)
+
     def predict(self, inp):
         if type(inp) != dict:
             inp = {"input_ids": inp}
         inp = {key: val.to(device=self.device) for (key, val) in inp.items()}
         with torch.no_grad():
-            outp = self.model(**inp)
-            logits = outp["logits"]
+            # return loss, logits, classifier_layer_outputs
+            logits = self.model(**inp)[1]
             # XXX: hard wired for 2x2 classes
             logits = logits.reshape(logits.shape[0], 2, 2)
             softmax = self.softmax_op.forward(logits)
@@ -104,9 +131,51 @@ class VariantTokenizer(object):
         ret["token_type_ids"] = np.zeros_like(toks, dtype=ctypes.c_int)
         return ret
 
+class VariantToVector(object):
+    def __init__(self, ref=None, tokenizer=None, window=96):
+        self.ref = ref
+        self.tokenizer = tokenizer
+        self.window = window
+    
+    def get_reference_context(self, site_info=None):
+        pos = site_info.pos
+        chrom = site_info.chrom
+        ref = site_info.ref
+
+        start = pos - 1
+        end = start + len(ref)
+        pre = self.ref[chrom][start - self.window:start]
+        post = self.ref[chrom][end:end + self.window]
+        return (pre, post)
+    
+    def process_site(self, site_info=None):
+        (pre, post) = self.get_reference_context(site_info=site_info)
+        gt_toks = {}
+        ref_bases = (site_info.ref, site_info.ref)
+        for (genotype_id, gt) in site_info.genotypes.items():
+            if (gt.bases == ('.', '.')) or (gt.bases == ref_bases):
+                gt_ref = None
+            else:
+                gt_ref = [f"{pre}{var if var != '.' else site_info.ref}{post}" for var in gt.bases]
+                if set(gt_ref[0] + gt_ref[1]) - set('AGTC'):
+                    gt_ref = None
+                else:
+                    gt_ref = self.tokenizer.tokenize(gt_ref)
+            gt_toks[genotype_id] = gt_ref
+        return gt_toks
+
 if __name__ == "__main__":
-    vfm = VariantFilterModel(klen=6)
-    inp = [[0, 1, 2, 3], [3, 4, 3, 4]]
-    inp = torch.tensor(inp)
+    vfm = TabularVariantFilterModel(klen=6)
+    #vfm = VariantFilterModel(klen=6)
+    size = 512
+    n_cats = n_nums = 5
+    inp = dict(
+        input_ids=[list(range(size))],
+        attention_mask=[[0] * size],
+        token_type_ids=[[0] * size],
+        cat_feats=[[float(x) for x in range(n_cats)]],
+        numerical_feats=[[float(x) for x in range(n_nums)]],
+    )
+    inp = {key: torch.tensor(val) for (key, val) in inp.items()}
     outp = vfm.predict(inp)
     print(outp)

@@ -13,8 +13,7 @@ from pyfaidx import Fasta
 from cyvcf2 import VCF, Writer
 from tqdm import tqdm
 
-from . models import VariantTokenizer, VariantFilterModel, ModelInputStruct
-from . predict import VariantToVector
+from . models import VariantTokenizer, VariantFilterModel, ModelInputStruct, VariantToVector
 from . cbuf import CircularBuffer
 from . base import Site, Genotype
 
