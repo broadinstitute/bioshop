@@ -11,11 +11,11 @@ import multiprocessing.managers
 import multiprocessing as mp
 from pyfaidx import Fasta
 from cyvcf2 import VCF, Writer
-from tqdm import tqdm
 
 from . models import VariantTokenizer, VariantFilterModel, ModelInputStruct, VariantToVector
 from . cbuf import CircularBuffer
 from . base import Site, Genotype
+from . utils import vcf_progress_bar
 
 class Worker(mp.Process):
     def __init__(self, manager=None, **kw):
@@ -94,37 +94,9 @@ class GatherWorker(Worker):
             else:
                 self.process_item(info)
 
-    def progress_bar(self, vcf=None):
-        seqlen_map = dict(zip(vcf.seqnames, vcf.seqlens))
-        ns = dict(
-            chrom=None,
-            pbar=None,
-            last_pos=0
-        )
-        def update(chrom, pos):
-            last_chrom = ns['chrom']
-            pbar = ns['pbar']
-            last_pos = ns['last_pos']
-            if last_chrom != chrom:
-                seqlen = seqlen_map[chrom]
-                if pbar:
-                    pbar.close()
-                pbar = tqdm(
-                    total=seqlen,
-                    desc=chrom,
-                    unit="base",
-                    unit_scale=True,
-                    colour='green'
-                )
-                ns['chrom'] = chrom
-                ns['pbar'] = pbar
-            pbar.update(pos - last_pos)
-            ns['last_pos'] = pos
-        return update
-
     def _run(self):
         vcf_in = VCF(self.vcf_in_path)
-        pbar = self.progress_bar(vcf_in)
+        pbar = vcf_progress_bar(vcf_in)
         if self.vcf_idx_path:
             vcf_in.set_index(self.vcf_idx_path)
 

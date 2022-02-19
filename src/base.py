@@ -28,6 +28,9 @@ class Site(BaseObject):
         # XXX: it might be possible to encode phase
         seen = set()
         genotypes = {}
+        # XXX: this is code with possible intention for
+        # genotype specific information
+        #format={key: site.format(key)[sample_idx] for key in site.FORMAT},
         for bases in site.gt_bases:
             bases = tuple(re.split('[/|]', bases))
             if bases in seen:
@@ -49,6 +52,7 @@ class Site(BaseObject):
             filter=site.FILTER,
             genotypes=genotypes,
             var_type=site.var_type,
+            info=dict(site.INFO),
             ref=site.REF,
             **kw
         )
