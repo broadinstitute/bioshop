@@ -4,11 +4,10 @@ from . worker import Worker
 from .. models import VariantTokenizer, ModelInputStruct, VariantToVector
 
 class VariantToVectorWorker(Worker):
-    def __init__(self, ref_path=None, tokenizer_config=None, window=96, **kw):
+    def __init__(self, ref_path=None, tokenizer_config=None, **kw):
         super().__init__(**kw)
         self.ref_path = ref_path
         self.tokenizer_config = tokenizer_config
-        self.window = window
         self.in_q = self.manager.to_vectorizer
         self.to_model = self.manager.to_model
         self.to_gather = self.manager.to_gather
@@ -34,7 +33,7 @@ class VariantToVectorWorker(Worker):
     def _run(self):
         ref = Fasta(self.ref_path)
         tokenizer = VariantTokenizer(**self.tokenizer_config)
-        vectorizer = VariantToVector(ref=ref, tokenizer=tokenizer, window=self.window)
+        vectorizer = VariantToVector(ref=ref, tokenizer=tokenizer)
 
         self._running.set()
         while self.running:

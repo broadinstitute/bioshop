@@ -117,34 +117,25 @@ class TabularVariantFilterModel(VariantFilterModel):
         )
         return ret
 
-
 class VariantTokenizer(object):
-    def __init__(self, klen=None, model_path=None, max_length=512):
+    Default_MinTemplateLength = 32
+    Token_CLS = "[CLS]"
+    Token_SEP = "[SEP]"
+
+    def __init__(self, klen=None, model_path=None, max_length=512, min_template_length=Default_MinTemplateLength):
         # XXX: maxlength from config?
         self.max_length = max_length
         self.klen = klen
         model_path = model_path or get_base_model_path(klen=klen)
         self._tokenizer = BertTokenizer.from_pretrained(model_path, do_lower_case=False)
+        self.min_template_length = min_template_length
         self.vocab = self._tokenizer.vocab
-    
+
     def kmerize(self, seq):
         assert type(seq) is str
         k_or_mask = lambda kmer: kmer if 'M' not in kmer else '[MASK]'
         kmers = [k_or_mask(seq[i:i + self.klen]) for i in range(len(seq) - self.klen + 1)]
         return kmers
-
-    def tokenize_only(self, gt=None):
-        (a1, a2) = [self.kmerize(al) for al in gt]
-        while (len(a1) + len(a2)) > (self.max_length - 3):
-            a1 = a1[1:-1]
-            a2 = a2[1:-1]
-        inp = ["[CLS]"] + a1 + ["[SEP]"] + a2 + ["[SEP]"]
-        toks = list(map(self.vocab.__getitem__, inp))
-        toks += [0] * (self.max_length - len(toks))
-        ret = {
-            "input_ids": np.array(toks, dtype=ctypes.c_int),
-        }
-        return ret
 
     def tokenize(self, gt=None):
         ret = self.tokenize_only(gt=gt)
@@ -153,36 +144,71 @@ class VariantTokenizer(object):
         ret["token_type_ids"] = np.zeros_like(toks, dtype=ctypes.c_int)
         return ret
 
+    def tokenize_only(self, up=None, down=None, varlist=None):
+        klen_bridge = lambda vs: up[-(self.klen - 1):] + vs + down[:self.klen - 1]
+        middle_out = []
+        for varstr in varlist:
+            varstr = klen_bridge(varstr)
+            k_varstr = self.kmerize(varstr)
+            middle_out += [self.Token_SEP] + k_varstr
+        middle_out.append(self.Token_SEP)
+        if (self.max_length - len(middle_out)) < self.min_template_length:
+            return None
+
+        up_k = self.kmerize(up)
+        down_k = self.kmerize(down)
+        prompt_k = up_k + middle_out + down_k
+
+        while len(prompt_k) > (self.max_length - 1):
+            prompt_k = prompt_k[1:-1]
+        inp = [self.Token_CLS] + prompt_k
+        toks = list(map(self.vocab.__getitem__, inp))
+        toks += [0] * (self.max_length - len(toks))
+        ret = {
+            "input_ids": np.array(toks, dtype=ctypes.c_int),
+        }
+        return ret
+
+    def tokenize(self, up=None, down=None, varlist=None):
+        ret = self.tokenize_only(up=up, down=down, varlist=varlist)
+        if ret is None:
+            return None
+        toks = ret["input_ids"]
+        ret["attention_mask"] = np.array(toks != 0, dtype=ctypes.c_int)
+        ret["token_type_ids"] = np.zeros_like(toks, dtype=ctypes.c_int)
+        return ret
+
 class VariantToVector(object):
-    def __init__(self, ref=None, tokenizer=None, window=96):
+    def __init__(self, ref=None, tokenizer=None):
         self.ref = ref
         self.tokenizer = tokenizer
-        self.window = window
+        self.window = self.tokenizer.max_length // 2
     
-    def get_reference_context(self, site_info=None):
+    def get_ref_up_down(self, site_info=None):
         pos = site_info.pos
         chrom = site_info.chrom
         ref = site_info.ref
 
         start = pos - 1
         end = start + len(ref)
-        pre = self.ref[chrom][start - self.window:start]
-        post = self.ref[chrom][end:end + self.window]
-        return (pre, post)
+        up = self.ref[chrom][start - self.window:start]
+        down = self.ref[chrom][end:end + self.window]
+        return (str(up), str(down))
     
     def process_site(self, site_info=None):
-        (pre, post) = self.get_reference_context(site_info=site_info)
+        (up, down) = self.get_ref_up_down(site_info=site_info)
         gt_toks = {}
         ref_bases = (site_info.ref, site_info.ref)
         for (genotype_id, gt) in site_info.genotypes.items():
             if (gt.bases == ('.', '.')) or (gt.bases == ref_bases):
                 gt_ref = None
             else:
-                gt_ref = [f"{pre}{var if var != '.' else site_info.ref}{post}" for var in gt.bases]
-                if set(gt_ref[0] + gt_ref[1]) - set('AGTC'):
+                all_chars = str.join('', gt.bases) + site_info.ref + up + down
+                if set(all_chars.upper()) - set('AGTC'):
                     gt_ref = None
                 else:
-                    gt_ref = self.tokenizer.tokenize(gt_ref)
+                    varlist = [site_info.ref] + list(gt.bases)
+                    gt_ref = self.tokenizer.tokenize(up=up, down=down, varlist=varlist)
             gt_toks[genotype_id] = gt_ref
         return gt_toks
 

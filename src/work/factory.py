@@ -18,14 +18,13 @@ def init_manager(batch_size=None, factor=4):
     manager.to_gather = manager.JoinableQueue()
     return manager
 
-def call_vcf(ref_path=None, vcf_in_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, window=96, region=None, n_workers=1):
+def call_vcf(ref_path=None, vcf_in_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, region=None, n_workers=1):
     manager = init_manager(batch_size=batch_size)
     tokenizer_config = dict(klen=klen)
     vtv_init = lambda: VariantToVectorWorker(
         manager=manager, 
         ref_path=ref_path, 
-        tokenizer_config=tokenizer_config, 
-        window=window
+        tokenizer_config=tokenizer_config
     )
     vtv_workers = [vtv_init() for x in range(n_workers)]
     model_worker = ModelWorker(manager=manager, model_path=model_path, batch_size=batch_size, klen=klen)
