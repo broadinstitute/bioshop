@@ -1,1 +1,1 @@
-from . factory import main
+from . factory import call_vcf

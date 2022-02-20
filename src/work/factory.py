@@ -1,5 +1,6 @@
 import multiprocessing.managers
 import multiprocessing as mp
+from .. models import ModelInputStruct
 from . model import ModelWorker
 from . scatter import ScatterWorker
 from . gather import GatherWorker
@@ -17,7 +18,7 @@ def init_manager(batch_size=None, factor=4):
     manager.to_gather = manager.JoinableQueue()
     return manager
 
-def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, window=96, region=None, n_workers=1):
+def call_vcf(ref_path=None, vcf_in_path=None, vcf_out_path=None, model_path=None, batch_size=None, klen=None, window=96, region=None, n_workers=1):
     manager = init_manager(batch_size=batch_size)
     tokenizer_config = dict(klen=klen)
     vtv_init = lambda: VariantToVectorWorker(
@@ -28,8 +29,8 @@ def main(ref_path=None, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, 
     )
     vtv_workers = [vtv_init() for x in range(n_workers)]
     model_worker = ModelWorker(manager=manager, model_path=model_path, batch_size=batch_size, klen=klen)
-    scatter_worker = ScatterWorker(manager=manager, vcf_in_path=vcf_in_path, vcf_idx_path=vcf_idx_path, region=region)
-    gather_worker = GatherWorker(manager=manager, vcf_in_path=vcf_in_path, vcf_idx_path=vcf_idx_path, vcf_out_path=vcf_out_path, region=region)
+    scatter_worker = ScatterWorker(manager=manager, vcf_in_path=vcf_in_path, region=region)
+    gather_worker = GatherWorker(manager=manager, vcf_in_path=vcf_in_path, vcf_out_path=vcf_out_path, region=region)
     workers = vtv_workers + [model_worker, scatter_worker, gather_worker]
     for worker in workers[::-1]:
         worker.start()

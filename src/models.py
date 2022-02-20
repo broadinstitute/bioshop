@@ -50,6 +50,27 @@ class VariantFilterModel(object):
         self.model = BertForSequenceClassification.from_pretrained(self.model_path, num_labels=self.num_labels).eval().to(device=self.device)
         self.softmax_op = torch.nn.Softmax(dim=-1)
 
+    def predict(self, inp):
+        if type(inp) != dict:
+            inp = {"input_ids": inp}
+        inp = {key: val.to(device=self.device) for (key, val) in inp.items()}
+        with torch.no_grad():
+            # return loss, logits, classifier_layer_outputs
+            logits = self.model(**inp)["logits"]
+            # XXX: hard wired for 2x2 classes
+            logits = logits.reshape(logits.shape[0], 2, 2)
+            softmax = self.softmax_op.forward(logits)
+            argmax = torch.argmax(softmax, dim=1)[:, None]
+            log_odds = torch.log(softmax[:, :, 0] / softmax[:, :, 1])
+        ret = dict(
+            logits=logits.cpu().numpy(),
+            softmax=softmax.cpu().numpy(),
+            argmax=argmax.cpu().numpy(),
+            log_odds=log_odds.cpu().numpy(),
+        )
+        return ret
+
+
 class TabularVariantFilterModel(VariantFilterModel):
     def __init__(self, klen=None, labels=None, model_path=None, device=None, bert_config=None):
         assert klen in (3, 4, 5, 6)
@@ -95,6 +116,7 @@ class TabularVariantFilterModel(VariantFilterModel):
             log_odds=log_odds.cpu().numpy(),
         )
         return ret
+
 
 class VariantTokenizer(object):
     def __init__(self, klen=None, model_path=None, max_length=512):

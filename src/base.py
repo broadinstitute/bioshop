@@ -10,6 +10,7 @@ class Site(BaseObject):
         chrom=None,
         pos=None,
         ref=None,
+        info=None,
         filter=None,
         var_type=None,
         genotypes=None,
@@ -19,6 +20,7 @@ class Site(BaseObject):
         self.pos = pos
         self.ref = ref
         self.var_type = var_type
+        self.info = info
         self.genotypes = genotypes
         self.filter = filter
 
@@ -49,11 +51,11 @@ class Site(BaseObject):
             site_id=site_id,
             chrom=site.CHROM,
             pos=site.POS,
+            ref=site.REF,
             filter=site.FILTER,
             genotypes=genotypes,
             var_type=site.var_type,
             info=dict(site.INFO),
-            ref=site.REF,
             **kw
         )
         return site_obj

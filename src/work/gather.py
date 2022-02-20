@@ -1,16 +1,16 @@
 import os
 import re
 import time
+import queue
 from cyvcf2 import VCF, Writer
 from . worker import Worker
 from .. utils import vcf_progress_bar
 from .. base import Site, Genotype
 
 class GatherWorker(Worker):
-    def __init__(self, vcf_in_path=None, vcf_idx_path=None, vcf_out_path=None, region=None, **kw):
+    def __init__(self, vcf_in_path=None, vcf_out_path=None, region=None, **kw):
         super().__init__(**kw)
         self.vcf_in_path = vcf_in_path
-        self.vcf_idx_path = vcf_idx_path
         self.vcf_out_path = vcf_out_path
         self.in_q = self.manager.to_gather
         self.region = region
@@ -56,8 +56,6 @@ class GatherWorker(Worker):
     def _run(self):
         vcf_in = VCF(self.vcf_in_path)
         pbar = vcf_progress_bar(vcf_in)
-        if self.vcf_idx_path:
-            vcf_in.set_index(self.vcf_idx_path)
 
         vcf_in.add_info_to_header({'ID': 'BLOD', 'Description': 'BERT LOD', 'Type':'Float', 'Number': '1'})
         vcf_in.add_filter_to_header({'ID': 'BERT', 'Description': 'mostly dnabert'})

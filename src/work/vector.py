@@ -1,3 +1,4 @@
+import queue
 from pyfaidx import Fasta
 from . worker import Worker
 from .. models import VariantTokenizer, ModelInputStruct, VariantToVector
