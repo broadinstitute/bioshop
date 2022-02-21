@@ -54,28 +54,77 @@ class TrainingVcfEvalLoader(TrainingVcfLoader):
                 continue
             yield ret
 
-def split_dataset(all_examples=None, train_frac=0.9, seed=None):
+def balance_dataset(all_examples=None, seed=None):
     rng = np.random.default_rng(seed=seed)
     label_counts = all_examples['label'].value_counts()
     n_choose = label_counts.min()
     print(f"n_choose={n_choose}")
     print(label_counts)
-    sampled_examples = []
+    balanced_examples = []
 
     for label_name in all_examples['label'].unique():
         example_set = all_examples \
                     [all_examples.label == label_name] \
                     .sample(n_choose, random_state=rng.bit_generator)
-        sampled_examples.append(example_set)
+        balanced_examples.append(example_set)
 
-    sampled_examples = pd.concat(sampled_examples)
-    sampled_examples = sampled_examples.sample(frac=1, random_state=rng.bit_generator)
-    print(f"{len(sampled_examples)} total examples")
+    balanced_examples = pd.concat(balanced_examples)
+    print(f"{len(balanced_examples)} balanced examples")
+    return balanced_examples
 
-    train_cnt = int(round(len(sampled_examples) * train_frac))
-    train_mask = np.arange(len(sampled_examples)) > train_cnt
-    train_ds = sampled_examples[train_mask]
-    test_ds = sampled_examples[~train_mask]
+def annotate_dataset(balanced_examples=None, vcf_src=None):
+    def rename_chrom(val):
+        if val.startswith('chr'):
+            val = val[3:]
+        try: 
+            #val = f'{val:02d}'
+            val = int(val)
+        except ValueError:
+            pass
+        return val
+    balanced_examples['chrom_'] = balanced_examples['chrom'].map(rename_chrom)
+    sorted_examples = balanced_examples.sort_values(['chrom_', 'pos', 'sample_name'], ascending=(True, True, True))
+    pbar = vcf_progress_bar(vcf=vcf_src)
+    src_itr = iter(vcf_src)
+    src_site = None
+    rows = []
+    for row in sorted_examples.to_dict(orient="records"):
+        del row['chrom_']
+        pos = row['pos']
+        chrom = row['chrom']
+        if (
+            (src_site is None) or \
+            (chrom != src_site.CHROM) or \
+            ((pos - src_site.POS) > 100000)
+        ):
+            coord = f'{chrom}:{pos}'
+            src_itr = vcf_src(coord)
+            src_site = next(src_itr)
+        if src_site is None or chrom != src_site.CHROM:
+            src_itr = vcf_src(chrom)
+            src_site = next(src_itr)
+        assert src_site.CHROM == chrom
+        while src_site.POS < pos:
+            src_site = next(src_itr)
+        assert src_site.CHROM == chrom
+        assert src_site.POS == pos
+        info = dict(src_site.INFO)
+        info = {f"INFO_{key}": info[key] for key in info}
+        row.update(info)
+        rows.append(row)
+        pbar(chrom, pos)
+    pbar()
+    return pd.DataFrame(rows)
+
+def split_dataset(balanced_examples=None, train_frac=0.9, seed=None):
+    rng = np.random.default_rng(seed=seed)
+    balanced_examples = balanced_examples.sample(frac=1, random_state=rng.bit_generator)
+
+    train_cnt = int(round(len(balanced_examples) * train_frac))
+    train_mask = np.arange(len(balanced_examples)) < train_cnt
+    train_ds = balanced_examples[train_mask]
+    test_ds = balanced_examples[~train_mask]
+    print(f"{len(train_ds)} train examples, {len(test_ds)} test examples")
     return (train_ds, test_ds)
 
 def load_vcfeval(vcf_path=None, sample_name=None, region=None):
@@ -92,20 +141,7 @@ def load_vcfeval(vcf_path=None, sample_name=None, region=None):
     pbar()
     print()
 
-def build_training_dataset(
-        vcf_sample_list=None, 
-        output_dir='mostly-training-data', 
-        method='vcfeval', 
-        seed=None,
-        train_frac=0.9,
-    ):
-
-    assert method == 'vcfeval'
-    os.makedirs(output_dir, exist_ok=True)
-    pile_fn = os.path.join(output_dir, "all-unbalanced.tsv")
-    train_fn = os.path.join(output_dir, "train.tsv")
-    test_fn = os.path.join(output_dir, "eval.tsv")
-
+def pile_vcfeval(vcf_sample_list=None, pile_fn=None):
     header = TrainingVcfEvalLoader.Header + ('sample_name', )
     with open(pile_fn, 'w') as fh:
         hdr = str.join('\t', header) + '\n'
@@ -117,10 +153,44 @@ def build_training_dataset(
                 row = str.join('\t', row) + '\n'
                 fh.write(row)
 
-    print("Balancing dataset")
-    df = pd.read_csv(pile_fn, sep='\t')
+
+def build_training_dataset(
+        vcf_sample_list=None, 
+        vcf_src_path=None,
+        output_dir='mostly-training-data', 
+        method='vcfeval', 
+        seed=None,
+        train_frac=0.9,
+    ):
+
+    assert method == 'vcfeval'
+    os.makedirs(output_dir, exist_ok=True)
+    pile_fn = os.path.join(output_dir, "all-unbalanced.tsv")
+    balanced_fn = os.path.join(output_dir, "balanced.tsv")
+    train_fn = os.path.join(output_dir, "_train.tsv")
+    test_fn = os.path.join(output_dir, "_eval.tsv")
+
+    if not os.path.exists(pile_fn):
+        pile_vcfeval(vcf_sample_list=vcf_sample_list, pile_fn=pile_fn)
+    else:
+        print("Using previously built example pile.")
+
+    if not os.path.exists(balanced_fn):
+        print("Balancing dataset")
+        df = pd.read_csv(pile_fn, sep='\t')
+        df = balance_dataset(df, seed=seed)
+        if vcf_src_path:
+            print("Annotating balanced dataset")
+            vcf_src = VCF(vcf_src_path)
+            df = annotate_dataset(df, vcf_src=vcf_src)
+        df.to_csv(balanced_fn, sep='\t', index=False)
+    else:
+        print("Using previously built balanced dataset.")
+        df = pd.read_csv(balanced_fn, sep='\t')
+
+    print("Splitting dataset")
     (train_df, test_df) = split_dataset(df, train_frac=train_frac, seed=seed)
 
-    print("Writing balanced+split datasets to disk")
     train_df.to_csv(train_fn, sep='\t', index=False)
     test_df.to_csv(test_fn, sep='\t', index=False)
+
