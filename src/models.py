@@ -9,6 +9,37 @@ def get_base_model_path(klen=3):
     model_path = f"armheb/DNA_bert_{klen}"
     return model_path
 
+class MM_ModelInputStruct(ctypes.Structure):
+    N_NUM_FEATS = 6
+    N_CAT_FEATS = 1
+
+    _fields_ = [
+        ('input_ids', ctypes.c_int * 512), 
+        ('attention_mask', ctypes.c_int * 512),
+        ('token_type_ids', ctypes.c_int * 512),
+        ('label', ctypes.c_int),
+        ('numerical_feats', ctypes.c_float * N_NUM_FEATS),
+        ('cat_feats', ctypes.c_int * N_CAT_FEATS),
+    ]
+
+    def __init__(self, **kw):
+        c_cast = lambda it: np.ctypeslib.as_ctypes(it) if isinstance(it, np.ndarray) else it
+        kw = {key: c_cast(val) for (key, val) in kw.items()}
+        super().__init__(**kw)
+
+    def as_numpy(self):
+        arrays = [
+            np.ctypeslib.as_array(self.input_ids),
+            np.ctypeslib.as_array(self.attention_mask),
+            np.ctypeslib.as_array(self.token_type_ids),
+            np.ctypeslib.as_array(self.label),
+            np.ctypeslib.as_array(self.numerical_feats),
+        ]
+        return np.array(arrays)
+
+    def get_key(self):
+        return dict(site_id=self.site_id, genotype_id=self.genotype_id)
+
 class ModelInputStruct(ctypes.Structure):
     _fields_ = [
         ('input_ids', ctypes.c_int * 512), 
@@ -88,13 +119,14 @@ class TabularVariantFilterModel(VariantFilterModel):
         self.bert_config = bert_config
         self.tabular_config = TabularConfig(
             combine_feat_method="mlp_on_concatenated_cat_and_numerical_feats_then_concat",
-            cat_feat_dim=5,
-            numerical_feat_dim=5,
+            cat_feat_dim=1,
+            numerical_feat_dim=6,
             numerical_bn=True,
             num_labels=4,
         )
         self.bert_config.tabular_config = self.tabular_config
-        self.model = BertWithTabular.from_pretrained(self.model_path, config=self.bert_config).eval().to(device=self.device)
+        #self.model = BertWithTabular.from_pretrained(self.model_path, config=self.bert_config).eval().to(device=self.device)
+        self.model = BertWithTabular.from_pretrained(self.model_path, config=self.bert_config)
         self.softmax_op = torch.nn.Softmax(dim=-1)
 
     def predict(self, inp):
@@ -195,6 +227,15 @@ class VariantToVector(object):
         down = self.ref[chrom][end:end + self.window]
         return (str(up), str(down))
     
+    def process_training_site(self, site_info=None):
+        (up, down) = self.get_ref_up_down(site_info=site_info)
+        varlist = [site_info.ref] + site_info.gt_bases
+        try:
+            gt_tok = self.tokenizer.tokenize(up=up, down=down, varlist=varlist)
+        except KeyError:
+            return None
+        return gt_tok
+
     def process_site(self, site_info=None):
         (up, down) = self.get_ref_up_down(site_info=site_info)
         gt_toks = {}
@@ -212,7 +253,8 @@ class VariantToVector(object):
             gt_toks[genotype_id] = gt_ref
         return gt_toks
 
-if __name__ == "__main__":
+def test():
+    return
     vfm = TabularVariantFilterModel(klen=6)
     #vfm = VariantFilterModel(klen=6)
     size = 512
@@ -227,3 +269,6 @@ if __name__ == "__main__":
     inp = {key: torch.tensor(val) for (key, val) in inp.items()}
     outp = vfm.predict(inp)
     print(outp)
+
+if __name__ == "__main__":
+    test()

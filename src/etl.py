@@ -1,11 +1,59 @@
 import os
 from cyvcf2 import VCF
+import numpy as np
+from pyfaidx import Fasta
+from sklearn.preprocessing import QuantileTransformer
+from tqdm import tqdm
+
+from . models import VariantTokenizer, VariantToVector
 from . utils import vcf_progress_bar
 
 import pandas as pd
 import numpy as np
 
-DefaultAnnotations = ["DP", "QD", "MQRankSum", "ReadPosRankSum", "FS", "SOR"]
+class DatasetOven(object):
+    DefaultLabels = ("SNP_TP", "SNP_FP", "INDEL_TP", "INDEL_FP")
+    DefaultColNums = ["INFO_DP", "INFO_QD", "INFO_MQRankSum", "INFO_ReadPosRankSum", "INFO_FS", "INFO_SOR"]
+    DefaultColCats = ["phased"]
+
+    def __init__(self, ref_path=None, tokenizer_config=None, num_col_list=None, cat_col_list=None, **kw):
+        self.ref_path = ref_path
+        self.tokenizer_config = tokenizer_config
+        # categorical
+        self.cat_col_list = cat_col_list or self.DefaultColCats
+        # numerical
+        self.num_col_list = num_col_list or self.DefaultColNums
+
+    def transform_numerical_values(self, dataset=None):
+        qt = QuantileTransformer()
+        num_vals = dataset[self.num_col_list]
+        num_vals = qt.fit_transform(num_vals)
+        dataset[self.num_col_list] = num_vals
+        return dataset
+
+    def bake(self, dataset=None):
+        dataset = self.transform_numerical_values(dataset=dataset)
+        itr = self.iter_dataset(dataset=dataset)
+        return pd.DataFrame(itr)
+
+    def iter_dataset(self, dataset=None):
+        ref = Fasta(self.ref_path)
+        tokenizer = VariantTokenizer(**self.tokenizer_config)
+        vectorizer = VariantToVector(ref=ref, tokenizer=tokenizer)
+
+        for (idx, row) in tqdm(dataset.iterrows(), total=len(dataset)):
+            # XXX: bug, kill eval()
+            row.gt_bases = eval(row.gt_bases)
+            example = vectorizer.process_training_site(row)
+            if example is None:
+                continue
+            numerical_vals = row[self.num_col_list].to_numpy()
+            example['numerical_feats'] = numerical_vals
+            cat_feats = row[self.cat_col_list].to_numpy().astype(np.int32)
+            example['cat_feats'] = cat_feats
+            example['label'] = self.DefaultLabels.index(row.label)
+            print(example)
+            yield example
 
 class TrainingVcfLoader(object):
     Header = ('chrom', 'pos', 'ref', 'alt', 'var_type', 'label')
@@ -172,14 +220,15 @@ def build_training_dataset(
         method='vcfeval', 
         seed=None,
         train_frac=0.9,
+        klen=3,
+        ref_path=None,
     ):
 
     assert method == 'vcfeval'
     os.makedirs(output_dir, exist_ok=True)
     pile_fn = os.path.join(output_dir, "all-unbalanced.tsv")
     balanced_fn = os.path.join(output_dir, "balanced.tsv")
-    train_fn = os.path.join(output_dir, "_train.tsv")
-    test_fn = os.path.join(output_dir, "_eval.tsv")
+    training_fn = os.path.join(output_dir, "training_data.h5")
 
     if not os.path.exists(pile_fn):
         pile_vcfeval(vcf_sample_list=vcf_sample_list, pile_fn=pile_fn)
@@ -201,6 +250,13 @@ def build_training_dataset(
 
     print("Splitting dataset")
     (train_df, test_df) = split_dataset(df, train_frac=train_frac, seed=seed)
+    if ref_path:
+        print("Baking dataset")
+        tokenizer_config = dict(klen=klen)
+        oven = DatasetOven(ref_path=ref_path, tokenizer_config=tokenizer_config)
+        test_df = oven.bake(test_df)
+        train_df = oven.bake(train_df)
 
-    train_df.to_csv(train_fn, sep='\t', index=False)
-    test_df.to_csv(test_fn, sep='\t', index=False)
+    train_df.to_hdf(training_fn, key='train', mode='w')
+    test_df.to_hdf(training_fn, key='test')
+
