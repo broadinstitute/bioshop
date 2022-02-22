@@ -5,6 +5,8 @@ from . utils import vcf_progress_bar
 import pandas as pd
 import numpy as np
 
+DefaultAnnotations = ["DP", "QD", "MQRankSum", "ReadPosRankSum", "FS", "SOR"]
+
 class TrainingVcfLoader(object):
     Header = ('chrom', 'pos', 'ref', 'alt', 'var_type', 'label')
 
@@ -193,4 +195,3 @@ def build_training_dataset(
 
     train_df.to_csv(train_fn, sep='\t', index=False)
     test_df.to_csv(test_fn, sep='\t', index=False)
-
