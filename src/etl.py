@@ -90,6 +90,7 @@ def annotate_dataset(balanced_examples=None, vcf_src=None):
     src_itr = iter(vcf_src)
     src_site = None
     rows = []
+    sample_map = {vcf_src.samples[idx]: idx for idx in range(len(vcf_src.samples))}
     for row in sorted_examples.to_dict(orient="records"):
         del row['chrom_']
         pos = row['pos']
@@ -112,6 +113,14 @@ def annotate_dataset(balanced_examples=None, vcf_src=None):
         assert src_site.POS == pos
         info = dict(src_site.INFO)
         info = {f"INFO_{key}": info[key] for key in info}
+        smp_idx = sample_map[row['sample_name']]
+        bases = src_site.gt_bases[smp_idx]
+        if '/' in bases:
+            row['gt_bases'] = bases.split('/')
+            row['phased'] = False
+        elif '|' in bases:
+            row['gt_bases'] = bases.split('|')
+            row['phased'] = True
         row.update(info)
         rows.append(row)
         pbar(chrom, pos)
