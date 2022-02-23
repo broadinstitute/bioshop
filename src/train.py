@@ -1,3 +1,4 @@
+import os
 import ctypes
 import torch
 import pandas as pd
@@ -33,40 +34,6 @@ class TrainDumb(IterableDataset):
             )
             inp = {key: torch.tensor(val) for (key, val) in inp.items()}
             yield inp
-
-class TrainingInputStruct(ctypes.Structure):
-    N_NUM_FEATS = 6
-    N_CAT_FEATS = 1
-
-    _fields_ = [
-        ('input_ids', ctypes.c_int * 512), 
-        ('attention_mask', ctypes.c_int * 512),
-        ('token_type_ids', ctypes.c_int * 512),
-        ('numerical_feats', ctypes.c_float * N_NUM_FEATS),
-        ('cat_feats', ctypes.c_float * N_CAT_FEATS),
-        ('labels', ctypes.c_int),
-    ]
-
-    def __init__(self, **kw):
-        c_cast = lambda it: np.ctypeslib.as_ctypes(it) if isinstance(it, np.ndarray) else it
-        kw = {key: c_cast(val) for (key, val) in kw.items()}
-        super().__init__(**kw)
-
-    def as_numpy(self):
-        arrays = [
-            np.ctypeslib.as_array(self.input_ids),
-            np.ctypeslib.as_array(self.attention_mask),
-            np.ctypeslib.as_array(self.token_type_ids),
-            np.ctypeslib.as_array(self.numerical_feats),
-            np.ctypeslib.as_array(self.cat_feats),
-            np.ctypeslib.as_array(self.labels),
-        ]
-        return np.array(arrays)
-
-    def as_dict(self):
-        arrays = self.as_numpy()
-        keys = [field[0] for field in self._fields_]
-        return dict(zip(keys, arrays))
 
 class TrainingDataIter(object):
     #DefaultColNums = ["INFO_DP", "INFO_QD", "INFO_MQRankSum", "INFO_ReadPosRankSum", "INFO_FS", "INFO_SOR"]
@@ -127,21 +94,56 @@ class TrainingDataIter(object):
             if vecs is None:
                 continue
             feats = {}
-            feats['numerical_feats'] = row[num_col_list].to_numpy(dtype=np.float)
-            feats['cat_feats'] = row[cat_col_list].to_numpy(dtype=np.float)
-            feats = {key: torch.tensor(val).float() for (key, val) in feats.items()}
-            vecs = {key: torch.tensor(val) for (key, val) in vecs.items()}
+            feats['numerical_feats'] = row[num_col_list].to_numpy(dtype=np.float32)
+            feats['cat_feats'] = row[cat_col_list].to_numpy(dtype=np.float32)
+            #feats = {key: torch.tensor(val).float() for (key, val) in feats.items()}
+            #vecs = {key: torch.tensor(val) for (key, val) in vecs.items()}
             feats.update(vecs)
-            feats['labels'] = torch.tensor(row['label_value'])
+            #feats['labels'] = torch.tensor(row['label_value'])
+            feats['labels'] = np.array([row['label_value']], dtype=np.int32)
             yield feats
+
+class ModelTrainingStruct(ctypes.Structure):
+    N_NUM_FEATS = 6
+    N_CAT_FEATS = 1
+
+    _fields_ = [
+        ('input_ids', ctypes.c_int * 512), 
+        ('attention_mask', ctypes.c_int * 512),
+        ('token_type_ids', ctypes.c_int * 512),
+        ('numerical_feats', ctypes.c_float * N_NUM_FEATS),
+        ('cat_feats', ctypes.c_float * N_CAT_FEATS),
+        ('labels', ctypes.c_int * 1),
+    ]
+
+    def __init__(self, **kw):
+        c_cast = lambda it: np.ctypeslib.as_ctypes(it) if isinstance(it, np.ndarray) else it
+        kw = {key: c_cast(val) for (key, val) in kw.items()}
+        super().__init__(**kw)
+
+    def as_numpy(self):
+        arrays = [
+            np.ctypeslib.as_array(self.input_ids),
+            np.ctypeslib.as_array(self.attention_mask),
+            np.ctypeslib.as_array(self.token_type_ids),
+            np.ctypeslib.as_array(self.numerical_feats),
+            np.ctypeslib.as_array(self.cat_feats),
+            np.ctypeslib.as_array(self.labels),
+        ]
+        return np.array(arrays)
+
+    def as_dict(self):
+        arrays = self.as_numpy()
+        keys = [field[0] for field in self._fields_]
+        return dict(zip(keys, arrays))
 
 class TrainingWorker(worker.Worker):
     def __init__(self, worker_config=None, maxsize=1024, **kw):
         super().__init__(**kw)
         self.worker_config = worker_config
-        self.cbuf = cbuf.CircularBuffer(ctype=ModelInputStruct, size=maxsize)
+        self.cbuf = cbuf.CircularBuffer(ctype=ModelTrainingStruct, size=maxsize)
 
-    def run(self):
+    def _run(self):
         itr = TrainingDataIter.load(**self.worker_config)
         for item in itr:
             item = ModelTrainingStruct(**item)
@@ -150,9 +152,9 @@ class TrainingWorker(worker.Worker):
     def pop(self, timeout=None):
         return self.cbuf.pop(timeout=timeout)
 
-class TrainingDataset(object):
+class TrainingDataset(IterableDataset):
     def __init__(self, dataset_path=None, ref_path=None, tokenizer_config=None, num_col_list=None, cat_col_list=None, labels=None, **kw):
-        self.config = dict(
+        self.worker_config = dict(
             dataset_path=dataset_path,
             ref_path=ref_path,
             tokenizer_config=tokenizer_config,
@@ -160,18 +162,31 @@ class TrainingDataset(object):
             cat_col_list=cat_col_list,
             labels=labels,
         )
-        self.config.update(kw)
+        self.worker_config.update(kw)
         self.worker = None
+
+    def __len__(self):
+        # quick and dirty `wc -l`
+        ds_path = self.worker_config['dataset_path']
+        count = 0
+        with open(ds_path) as fh:
+            fh.readline()
+            for line in fh:
+                count += 1
+        return count
 
     def __iter__(self):
         worker = TrainingWorker(worker_config=self.worker_config)
         worker.start()
+        worker.wait_until_running()
 
         while worker.running:
             try:
-                yield worker.pop(timeout=1)
+                item = worker.pop(timeout=.1)
+                item = item.as_dict()
+                yield item
             except TimeoutError:
-                continue
+                print("starving")
 
 def train(ref_path=None, klen=None, checkpoint_dir=None, train_fn=None, eval_fn=None):
     tokenizer_config = {'klen':3}
@@ -182,9 +197,14 @@ def train(ref_path=None, klen=None, checkpoint_dir=None, train_fn=None, eval_fn=
 
     train_fn = "mostly-training-data/train.tsv"
     eval_fn = "mostly-training-data/eval.tsv"
+    short_fn = "mostly-training-data/short.tsv"
+    short_fn = os.path.abspath(short_fn)
+    eval_fn = train_fn = short_fn
+    ref_path = os.path.abspath(ref_path)
 
-    train_ds = TrainingDataset(train_fn, ref_path=ref_path, tokenizer_config=tokenizer_config)
-    eval_ds = TrainingDataset(eval_fn, ref_path=ref_path, tokenizer_config=tokenizer_config)
+
+    train_ds = TrainingDataset(dataset_path=train_fn, ref_path=ref_path, tokenizer_config=tokenizer_config)
+    eval_ds = TrainingDataset(dataset_path=eval_fn, ref_path=ref_path, tokenizer_config=tokenizer_config)
 
     training_args = TrainingArguments(
         output_dir=checkpoint_dir,
@@ -194,7 +214,7 @@ def train(ref_path=None, klen=None, checkpoint_dir=None, train_fn=None, eval_fn=
         per_device_eval_batch_size=2,
         logging_first_step=True,
         logging_strategy="steps",
-        logging_steps=1,
+        logging_steps=50,
     )
 
     ds_train = TrainDumb()

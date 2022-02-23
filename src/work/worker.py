@@ -19,15 +19,17 @@ class Worker(mp.Process):
 
     def _run(self):
         pass
+    
+    def wait_until_running(self, timeout=None):
+        return self._running.wait(timeout=timeout)
 
     def run(self):
         pwd = os.getcwd()
         with TemporaryDirectory() as tmpdir:
             os.chdir(tmpdir)
-            self._running.set()
             msg = f"Starting {self.__class__.__name__} worker run={self.running}, tmpdir={tmpdir}"
             print(msg)
-            time.sleep(1)
+            self._running.set()
             self._run()
         os.chdir(pwd)
         msg = f"{self.__class__.__name__} shutting down"
