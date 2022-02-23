@@ -6,7 +6,7 @@ import multiprocessing as mp
 class Worker(mp.Process):
     def __init__(self, manager=None, **kw):
         super().__init__(**kw)
-        assert manager
+        #assert manager
         self.manager = manager
         self._running = mp.Event()
 
@@ -32,4 +32,4 @@ class Worker(mp.Process):
         os.chdir(pwd)
         msg = f"{self.__class__.__name__} shutting down"
         print(msg)
-
+        self.shutdown()

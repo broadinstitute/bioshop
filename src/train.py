@@ -1,3 +1,4 @@
+import ctypes
 import torch
 import pandas as pd
 import numpy as np
@@ -6,7 +7,9 @@ from torch.utils.data import IterableDataset
 from transformers import TrainingArguments, Trainer
 from sklearn.preprocessing import QuantileTransformer
 
-from mostly.models import VariantTokenizer, ModelInputStruct, VariantToVector, TabularVariantFilterModel
+from . models import VariantTokenizer, ModelInputStruct, VariantToVector, TabularVariantFilterModel
+from . work import worker
+from . work import cbuf
 
 class TrainDumb(IterableDataset):
     def __init__(self, klen=3, size=1000):
@@ -31,7 +34,41 @@ class TrainDumb(IterableDataset):
             inp = {key: torch.tensor(val) for (key, val) in inp.items()}
             yield inp
 
-class TrainingDataIter(IterableDataset):
+class TrainingInputStruct(ctypes.Structure):
+    N_NUM_FEATS = 6
+    N_CAT_FEATS = 1
+
+    _fields_ = [
+        ('input_ids', ctypes.c_int * 512), 
+        ('attention_mask', ctypes.c_int * 512),
+        ('token_type_ids', ctypes.c_int * 512),
+        ('numerical_feats', ctypes.c_float * N_NUM_FEATS),
+        ('cat_feats', ctypes.c_float * N_CAT_FEATS),
+        ('labels', ctypes.c_int),
+    ]
+
+    def __init__(self, **kw):
+        c_cast = lambda it: np.ctypeslib.as_ctypes(it) if isinstance(it, np.ndarray) else it
+        kw = {key: c_cast(val) for (key, val) in kw.items()}
+        super().__init__(**kw)
+
+    def as_numpy(self):
+        arrays = [
+            np.ctypeslib.as_array(self.input_ids),
+            np.ctypeslib.as_array(self.attention_mask),
+            np.ctypeslib.as_array(self.token_type_ids),
+            np.ctypeslib.as_array(self.numerical_feats),
+            np.ctypeslib.as_array(self.cat_feats),
+            np.ctypeslib.as_array(self.labels),
+        ]
+        return np.array(arrays)
+
+    def as_dict(self):
+        arrays = self.as_numpy()
+        keys = [field[0] for field in self._fields_]
+        return dict(zip(keys, arrays))
+
+class TrainingDataIter(object):
     #DefaultColNums = ["INFO_DP", "INFO_QD", "INFO_MQRankSum", "INFO_ReadPosRankSum", "INFO_FS", "INFO_SOR"]
     DefaultColNums = ("DP", "QD", "MQRankSum", "ReadPosRankSum", "FS", "SOR")
     DefaultColCats = ("phased", )
@@ -67,11 +104,10 @@ class TrainingDataIter(IterableDataset):
         #
         self.dataset['phased_value'] = self.dataset['phased'].apply(int)
 
-
     @classmethod
-    def load(cls, tsv_fn=None, **kw):
-        print(f"Loadining dataset from {tsv_fn}")
-        dataset = pd.read_csv(tsv_fn, sep='\t')
+    def load(cls, dataset_path=None, **kw):
+        print(f"Loadining dataset from {dataset_path}")
+        dataset = pd.read_csv(dataset_path, sep='\t')
         return cls(dataset=dataset, **kw)
 
     def __len__(self):
@@ -99,6 +135,44 @@ class TrainingDataIter(IterableDataset):
             feats['labels'] = torch.tensor(row['label_value'])
             yield feats
 
+class TrainingWorker(worker.Worker):
+    def __init__(self, worker_config=None, maxsize=1024, **kw):
+        super().__init__(**kw)
+        self.worker_config = worker_config
+        self.cbuf = cbuf.CircularBuffer(ctype=ModelInputStruct, size=maxsize)
+
+    def run(self):
+        itr = TrainingDataIter.load(**self.worker_config)
+        for item in itr:
+            item = ModelTrainingStruct(**item)
+            self.cbuf.push(item)
+
+    def pop(self, timeout=None):
+        return self.cbuf.pop(timeout=timeout)
+
+class TrainingDataset(object):
+    def __init__(self, dataset_path=None, ref_path=None, tokenizer_config=None, num_col_list=None, cat_col_list=None, labels=None, **kw):
+        self.config = dict(
+            dataset_path=dataset_path,
+            ref_path=ref_path,
+            tokenizer_config=tokenizer_config,
+            num_col_list=num_col_list,
+            cat_col_list=cat_col_list,
+            labels=labels,
+        )
+        self.config.update(kw)
+        self.worker = None
+
+    def __iter__(self):
+        worker = TrainingWorker(worker_config=self.worker_config)
+        worker.start()
+
+        while worker.running:
+            try:
+                yield worker.pop(timeout=1)
+            except TimeoutError:
+                continue
+
 def train(ref_path=None, klen=None, checkpoint_dir=None, train_fn=None, eval_fn=None):
     tokenizer_config = {'klen':3}
     checkpoint_dir = f"checkpoints/null"
@@ -109,8 +183,8 @@ def train(ref_path=None, klen=None, checkpoint_dir=None, train_fn=None, eval_fn=
     train_fn = "mostly-training-data/train.tsv"
     eval_fn = "mostly-training-data/eval.tsv"
 
-    train_ds = TrainingDataIter.load(train_fn, ref_path=ref_path, tokenizer_config=tokenizer_config)
-    eval_ds = TrainingDataIter.load(eval_fn, ref_path=ref_path, tokenizer_config=tokenizer_config)
+    train_ds = TrainingDataset(train_fn, ref_path=ref_path, tokenizer_config=tokenizer_config)
+    eval_ds = TrainingDataset(eval_fn, ref_path=ref_path, tokenizer_config=tokenizer_config)
 
     training_args = TrainingArguments(
         output_dir=checkpoint_dir,
