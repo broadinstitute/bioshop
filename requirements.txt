@@ -1,7 +1,9 @@
-multimodal-transformers
+pandas
+numpy
+tqdm
 transformers
-datasets
 wandb
 gcsfs
 pyfaidx 
 cyvcf2
+https://github.com/gileshall/Multimodal-Toolkit/archive/refs/heads/master.zip

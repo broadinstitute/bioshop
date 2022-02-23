@@ -11,6 +11,7 @@ from sklearn.preprocessing import QuantileTransformer
 from . models import VariantTokenizer, ModelInputStruct, VariantToVector, TabularVariantFilterModel
 from . work import worker
 from . work import cbuf
+from . metrics import compute_metrics
 
 class TrainDumb(IterableDataset):
     def __init__(self, klen=3, size=1000):
@@ -43,7 +44,7 @@ class TrainingDataIter(object):
 
     def __init__(self, dataset=None, ref_path=None, tokenizer_config=None, num_col_list=None, cat_col_list=None, labels=None, **kw):
         super().__init__(**kw)
-        self.dataset = dataset.replace(np.nan, 0)
+        self.dataset = dataset.replace(np.nan, 0).sample(frac=1)
         self.ref_path = ref_path
         self.tokenizer_config = tokenizer_config
         # categorical
@@ -186,7 +187,7 @@ class TrainingDataset(IterableDataset):
                 item = item.as_dict()
                 yield item
             except TimeoutError:
-                print("starving")
+                pass
 
 def train(ref_path=None, klen=None, checkpoint_dir=None, train_fn=None, eval_fn=None):
     tokenizer_config = {'klen':3}
@@ -195,26 +196,27 @@ def train(ref_path=None, klen=None, checkpoint_dir=None, train_fn=None, eval_fn=
     vfm = TabularVariantFilterModel(klen=klen)
     model = vfm.model
 
-    train_fn = "mostly-training-data/train.tsv"
-    eval_fn = "mostly-training-data/eval.tsv"
-    short_fn = "mostly-training-data/short.tsv"
-    short_fn = os.path.abspath(short_fn)
-    eval_fn = train_fn = short_fn
+    eval_fn = os.path.abspath(eval_fn)
+    train_fn = os.path.abspath(train_fn)
     ref_path = os.path.abspath(ref_path)
-
 
     train_ds = TrainingDataset(dataset_path=train_fn, ref_path=ref_path, tokenizer_config=tokenizer_config)
     eval_ds = TrainingDataset(dataset_path=eval_fn, ref_path=ref_path, tokenizer_config=tokenizer_config)
 
     training_args = TrainingArguments(
         output_dir=checkpoint_dir,
-        num_train_epochs=1,
+        num_train_epochs=10,
         #max_steps=100,
         per_device_train_batch_size=8,
-        per_device_eval_batch_size=2,
-        logging_first_step=True,
+        per_device_eval_batch_size=256,
+        eval_accumulation_steps=1,
         logging_strategy="steps",
-        logging_steps=50,
+        logging_steps=1,
+        report_to=None,
+        save_strategy="epoch",
+        save_total_limit=5,
+        evaluation_strategy="steps",
+        eval_steps=5000,
     )
 
     ds_train = TrainDumb()
@@ -224,6 +226,7 @@ def train(ref_path=None, klen=None, checkpoint_dir=None, train_fn=None, eval_fn=
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
+        compute_metrics=compute_metrics,
     )
 
     trainer.train()

@@ -1,0 +1,7 @@
+*.sh
+*.local
+*data*
+tarpit/
+*.gz*
+wandb
+weights*
