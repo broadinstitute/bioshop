@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from .. models import VariantFilterModel
+from .. models import VariantFilterModel, TabularVariantFilterModel
 from .. base import Genotype
 from . worker import Worker
 
@@ -13,7 +13,7 @@ class ModelWorker(Worker):
         self.in_q = self.manager.to_model
         self.out_q = self.manager.to_gather
 
-    def get_batch(self, timeout=1):
+    def get_batch_data(self, timeout=1):
         batch = []
         while (len(batch) < self.batch_size):
             try:
@@ -22,18 +22,29 @@ class ModelWorker(Worker):
                 #print(f"{self.__class__.__name__} get_batch: buf={self.in_q.qsize.value}")
                 break
             batch.append(item)
-        if not batch:
+        return batch
+
+    def build_batch(self, batch_rows=None):
+        batch_fields = (
+            'input_ids', 'attention_mask', 
+            'token_type_ids', 'numerical_feats', 
+            'cat_feats', 
+        )
+        (batch_keys, batch_data) = zip(*[(row.get_key(), row.as_dict()) for row in batch_rows])
+        to_torch = lambda field: torch.tensor([row[field] for row in batch_data])
+        batch = {field: to_torch(field) for field in batch_fields}
+        return (batch_keys, batch)
+
+    def get_batch(self, timeout=1):
+        batch_rows = self.get_batch_data(timeout=timeout)
+        if not batch_rows:
             return (None, None)
-        keys = [ds.get_key() for ds in batch]
-        batch = np.array([ds.as_numpy() for ds in batch])
-        batch = batch.transpose([1, 0, 2])
-        batch = torch.tensor(batch)
-        headers = ('input_ids', 'attention_mask', 'token_type_ids')
-        batch = dict(zip(headers, batch))
-        return (keys, batch)
+        (batch_keys, batch) = self.build_batch(batch_rows=batch_rows)
+        return (batch_keys, batch)
 
     def _run(self):
-        model = VariantFilterModel(model_path=self.model_path, klen=self.klen)
+        #model = VariantFilterModel(model_path=self.model_path, klen=self.klen)
+        model = TabularVariantFilterModel(model_path=self.model_path, klen=self.klen)
 
         while self.running:
             (batch_keys, batch) = self.get_batch()

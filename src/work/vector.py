@@ -1,13 +1,14 @@
 import queue
 from pyfaidx import Fasta
 from . worker import Worker
-from .. models import VariantTokenizer, ModelInputStruct, VariantToVector
+from .. models import VariantTokenizer, ModelInputStruct, VariantToVector, MultiModelInputStruct
 
 class VariantToVectorWorker(Worker):
-    def __init__(self, ref_path=None, tokenizer_config=None, **kw):
+    def __init__(self, ref_path=None, tokenizer_config=None, num_transformer=None, **kw):
         super().__init__(**kw)
         self.ref_path = ref_path
         self.tokenizer_config = tokenizer_config
+        self.num_transformer = num_transformer
         self.in_q = self.manager.to_vectorizer
         self.to_model = self.manager.to_model
         self.to_gather = self.manager.to_gather
@@ -21,7 +22,8 @@ class VariantToVectorWorker(Worker):
                 continue
             gt_inp["site_id"] = site_info.site_id
             gt_inp["genotype_id"] = genotype_id
-            inp = ModelInputStruct(**gt_inp)
+            #inp = ModelInputStruct(**gt_inp)
+            inp = MultiModelInputStruct.from_numpy(**gt_inp)
             model_inputs.append(inp)
         assert model_inputs or site_info.is_pending == False
 
@@ -33,7 +35,8 @@ class VariantToVectorWorker(Worker):
     def _run(self):
         ref = Fasta(self.ref_path)
         tokenizer = VariantTokenizer(**self.tokenizer_config)
-        vectorizer = VariantToVector(ref=ref, tokenizer=tokenizer)
+        # XXX: multi modal columns?
+        vectorizer = VariantToVector(ref=ref, tokenizer=tokenizer, num_transformer=self.num_transformer)
 
         self._running.set()
         while self.running:
@@ -46,6 +49,5 @@ class VariantToVectorWorker(Worker):
                 #print(f"{self.__class__.__name__} loop: in_q empty. buf={self.to_model.qsize.value}")
                 continue
 
-            gt_inps = vectorizer.process_site(site_info)
+            gt_inps = vectorizer.process_site(site_info=site_info)
             self.dispatch_site(site_info=site_info, gt_inps=gt_inps)
-            

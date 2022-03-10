@@ -9,38 +9,43 @@ def get_base_model_path(klen=3):
     model_path = f"armheb/DNA_bert_{klen}"
     return model_path
 
-class MM_ModelInputStruct(ctypes.Structure):
+class ModelStructMixin(object):
+    @classmethod
+    def from_numpy(cls, **kw):
+        c_cast = lambda it: np.ctypeslib.as_ctypes(it) if isinstance(it, np.ndarray) else it
+        kw = {key: c_cast(val) for (key, val) in kw.items()}
+        return cls(**kw)
+
+    def as_numpy(self):
+        to_np = lambda attr: np.ctypeslib.as_array(getattr(self, attr))
+        arrays = (to_np(name) for (name, _) in self._fields_)
+        return tuple(arrays)
+
+    def as_dict(self):
+        arrays = self.as_numpy()
+        keys = [field[0] for field in self._fields_]
+        return dict(zip(keys, arrays))
+
+    def get_key(self):
+        return dict(site_id=self.site_id, genotype_id=self.genotype_id)
+
+class MultiModelInputStruct(ctypes.Structure, ModelStructMixin):
     N_NUM_FEATS = 6
     N_CAT_FEATS = 1
+    N_OUT_LABELS = 1
 
     _fields_ = [
         ('input_ids', ctypes.c_int * 512), 
         ('attention_mask', ctypes.c_int * 512),
         ('token_type_ids', ctypes.c_int * 512),
-        ('label', ctypes.c_int),
         ('numerical_feats', ctypes.c_float * N_NUM_FEATS),
-        ('cat_feats', ctypes.c_int * N_CAT_FEATS),
+        ('cat_feats', ctypes.c_float * N_CAT_FEATS),
+        ('labels', ctypes.c_int * N_OUT_LABELS),
+        ('site_id', ctypes.c_int),
+        ('genotype_id', ctypes.c_int),
     ]
 
-    def __init__(self, **kw):
-        c_cast = lambda it: np.ctypeslib.as_ctypes(it) if isinstance(it, np.ndarray) else it
-        kw = {key: c_cast(val) for (key, val) in kw.items()}
-        super().__init__(**kw)
-
-    def as_numpy(self):
-        arrays = [
-            np.ctypeslib.as_array(self.input_ids),
-            np.ctypeslib.as_array(self.attention_mask),
-            np.ctypeslib.as_array(self.token_type_ids),
-            np.ctypeslib.as_array(self.label),
-            np.ctypeslib.as_array(self.numerical_feats),
-        ]
-        return np.array(arrays)
-
-    def get_key(self):
-        return dict(site_id=self.site_id, genotype_id=self.genotype_id)
-
-class ModelInputStruct(ctypes.Structure):
+class ModelInputStruct(ctypes.Structure, ModelStructMixin):
     _fields_ = [
         ('input_ids', ctypes.c_int * 512), 
         ('attention_mask', ctypes.c_int * 512),
@@ -48,22 +53,6 @@ class ModelInputStruct(ctypes.Structure):
         ('site_id', ctypes.c_int),
         ('genotype_id', ctypes.c_int),
     ]
-
-    def __init__(self, **kw):
-        c_cast = lambda it: np.ctypeslib.as_ctypes(it) if isinstance(it, np.ndarray) else it
-        kw = {key: c_cast(val) for (key, val) in kw.items()}
-        super().__init__(**kw)
-
-    def as_numpy(self):
-        arrays = [
-            np.ctypeslib.as_array(self.input_ids),
-            np.ctypeslib.as_array(self.attention_mask),
-            np.ctypeslib.as_array(self.token_type_ids)
-        ]
-        return np.array(arrays)
-
-    def get_key(self):
-        return dict(site_id=self.site_id, genotype_id=self.genotype_id)
 
 class VariantFilterModel(object):
     DefaultLabels = ("SNP_TP", "SNP_FP", "INDEL_TP", "INDEL_FP")
@@ -118,15 +107,15 @@ class TabularVariantFilterModel(VariantFilterModel):
             )
         self.bert_config = bert_config
         self.tabular_config = TabularConfig(
-            combine_feat_method="mlp_on_concatenated_cat_and_numerical_feats_then_concat",
+            combine_feat_method="weighted_feature_sum_on_transformer_cat_and_numerical_feats",
             cat_feat_dim=1,
             numerical_feat_dim=6,
             numerical_bn=True,
             num_labels=4,
         )
         self.bert_config.tabular_config = self.tabular_config
-        #self.model = BertWithTabular.from_pretrained(self.model_path, config=self.bert_config).eval().to(device=self.device)
-        self.model = BertWithTabular.from_pretrained(self.model_path, config=self.bert_config)
+        self.model = BertWithTabular.from_pretrained(self.model_path, config=self.bert_config).eval().to(device=self.device)
+        #self.model = BertWithTabular.from_pretrained(self.model_path, config=self.bert_config)
         self.softmax_op = torch.nn.Softmax(dim=-1)
 
     def predict(self, inp):
@@ -211,10 +200,18 @@ class VariantTokenizer(object):
         return ret
 
 class VariantToVector(object):
-    def __init__(self, ref=None, tokenizer=None):
+    DefaultColNums = ("DP", "QD", "MQRankSum", "ReadPosRankSum", "FS", "SOR")
+    DefaultColCats = ("phased", )
+
+    def __init__(self, ref=None, tokenizer=None, num_transformer=None, num_col_list=None, cat_col_list=None):
         self.ref = ref
         self.tokenizer = tokenizer
         self.window = self.tokenizer.max_length // 2
+        self.num_transformer = num_transformer
+        # categorical
+        self.cat_col_list = list(cat_col_list or self.DefaultColCats)
+        # numerical
+        self.num_col_list = list(num_col_list or self.DefaultColNums)
     
     def get_ref_up_down(self, site_info=None):
         pos = site_info.pos
@@ -236,22 +233,37 @@ class VariantToVector(object):
             return None
         return gt_tok
 
+    def get_num_feats(self, site_info=None, gt_info=None):
+        # gt_info not used currently
+        info = site_info.info
+        vals = [info.get(key, 0) for key in self.num_col_list]
+        ary = np.array(vals).reshape(1, -1)
+        out = self.num_transformer.transform(ary)
+        return np.squeeze(out).astype(np.float32)
+
+    def get_cat_feats(self, site_info=None, gt_info=None):
+        # site_info not used currently
+        return np.array([float(gt_info.phased)], dtype=np.float32)
+
     def process_site(self, site_info=None):
         (up, down) = self.get_ref_up_down(site_info=site_info)
-        gt_toks = {}
+        gt_feats = {}
         ref_bases = (site_info.ref, site_info.ref)
-        for (genotype_id, gt) in site_info.genotypes.items():
-            if (gt.bases == ('.', '.')) or (gt.bases == ref_bases):
-                gt_ref = None
+        for (genotype_id, gt_info) in site_info.genotypes.items():
+            if (gt_info.bases == ('.', '.')) or (gt_info.bases == ref_bases):
+                feats = None
             else:
-                all_chars = str.join('', gt.bases) + site_info.ref + up + down
+                all_chars = str.join('', gt_info.bases) + site_info.ref + up + down
                 if set(all_chars.upper()) - set('AGTC'):
-                    gt_ref = None
+                    feats = None
                 else:
-                    varlist = [site_info.ref] + list(gt.bases)
-                    gt_ref = self.tokenizer.tokenize(up=up, down=down, varlist=varlist)
-            gt_toks[genotype_id] = gt_ref
-        return gt_toks
+                    varlist = [site_info.ref] + list(gt_info.bases)
+                    feats = self.tokenizer.tokenize(up=up, down=down, varlist=varlist)
+                    if feats:
+                        feats['numerical_feats'] = self.get_num_feats(site_info=site_info, gt_info=gt_info)
+                        feats['cat_feats'] = self.get_cat_feats(site_info=site_info, gt_info=gt_info)
+            gt_feats[genotype_id] = feats
+        return gt_feats
 
 def test():
     return

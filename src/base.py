@@ -34,15 +34,22 @@ class Site(BaseObject):
         # genotype specific information
         #format={key: site.format(key)[sample_idx] for key in site.FORMAT},
         for bases in site.gt_bases:
-            bases = tuple(re.split('[/|]', bases))
-            if bases in seen:
+            if '/' in bases:
+                bases = tuple(bases.split('/'))
+                phased = False
+            elif '|' in bases:
+                bases = tuple(bases.split('|'))
+                phased = True
+            gt_key = bases + (phased,)
+            if gt_key in seen:
                 continue
-            seen.add(bases)
+            seen.add(gt_key)
             genotype_id = len(genotypes)
             gt = Genotype(
                 site_id=site_id, 
                 genotype_id=genotype_id,
                 bases=bases,
+                phased=phased,
                 ref=site.REF,
             )
             genotypes[genotype_id] = gt
@@ -139,6 +146,7 @@ class Genotype(BaseObject):
         genotype_id=None,
         ref=None,
         bases=None,
+        phased=False,
         status='pending',
         log_odds=None
     ):
@@ -146,11 +154,14 @@ class Genotype(BaseObject):
         self.genotype_id = genotype_id
         self.ref = ref
         self.bases = bases
+        self.phased = phased
         self.status = status
         self.log_odds = log_odds
 
     def __repr__(self):
-        msg = f"{self.__class__.__name__}<#{self.site_id},{self.genotype_id}> pending={self.is_pending}, alleles={str.join(', ', self.bases)}, log_odds={self.log_odds}"
+        pchar = '|' if self.phased else '/'
+        bases = str.join(pchar, self.bases)
+        msg = f"{self.__class__.__name__}<#{self.site_id},{self.genotype_id}> pending={self.is_pending}, alleles={bases}, log_odds={self.log_odds}"
         return msg
 
     @property
