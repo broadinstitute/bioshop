@@ -68,12 +68,18 @@ class Site(BaseObject):
         return site_obj
 
     def call_site(self, site=None):
-        gt_map = {gt.bases: gt for gt in self.genotypes.values()}
+        gt_map = {tuple(gt.bases) + (gt.phased,): gt for gt in self.genotypes.values()}
         scores = []
         nc = 0
         for (idx, bases) in enumerate(site.gt_bases):
-            bases = tuple(re.split('[/|]', bases))
-            gt = gt_map[bases]
+            if '/' in bases:
+                bases = tuple(bases.split('/'))
+                phased = False
+            elif '|' in bases:
+                bases = tuple(bases.split('|'))
+                phased = True
+            gt_key = bases + (phased,)
+            gt = gt_map[gt_key]
             if not gt.log_odds:
                 nc += 1
                 scores.append(0)
@@ -83,6 +89,7 @@ class Site(BaseObject):
             else:
                 assert gt.is_indel
                 score = gt.log_odds[1]
+            # sample level filtering (disabled)
             #if score < 0:
                 #site.genotypes[idx] = ([-1] * site.ploidy) + [False]
             scores.append(score)
