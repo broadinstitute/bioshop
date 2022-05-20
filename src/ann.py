@@ -84,6 +84,7 @@ class AnnotationTransformer(object):
         msg = f"Training numerical transformer with {n_samples * n_sites} variants from {n_sites} random sites"
         print(msg)
         vcf = VCF(vcf_path)
-        samples = self.sample_annotations(vcf=vcf)
+        df = self.sample_annotations(vcf=vcf)
+        samples = df[list(self.ann_list)]
         self.transformer.fit(samples)
         self._trained = True
