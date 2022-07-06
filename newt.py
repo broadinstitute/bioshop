@@ -302,7 +302,6 @@ class ModelRunner(Worker):
                 labels = (~label_mask * -100) + (label_mask * label_ids)
                 labels = labels.to(outp.logits.device)
                 loss = F.cross_entropy(outp.logits.permute(0, 2, 1), labels, reduction='none')
-                print(loss.cpu().numpy().tolist())
                 loss = torch.sum(loss, axis=-1) / torch.sum(label_mask, axis=-1)
                 batch['loss'] = loss.cpu()
             #pprint({key: (batch[key].shape, batch[key].dtype) for key in batch})
