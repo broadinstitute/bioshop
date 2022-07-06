@@ -14,7 +14,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
-from cyvcf2 import VCF, Writer
+#from cyvcf2 import VCF, Writer
+from pysam import VariantFile
 import click
 
 Status_PENDING = 1
@@ -157,7 +158,8 @@ class Worker(mp.Process):
     running = property(get_running, set_running)
 
 def vcf_progress_bar(vcf=None):
-    seqlen_map = dict(zip(vcf.seqnames, vcf.seqlens))
+    seq_len_f = lambda it: (it.name, it.length)
+    seqlen_map = dict(map(seq_len_f, vcf.header.contigs.values()))
     ns = dict(
         chrom=None,
         pbar=None,
@@ -221,9 +223,8 @@ class Gather(Worker):
         return False
 
     def score_alleles(self, site=None):
-        alleles = [site.REF] + list(site.ALT)
-        results = {}
-        for allele in alleles:
+        scores = {}
+        for allele in site.alleles:
             allele_hash = get_allele_hash(site, allele)
             if allele_hash not in self.results:
                 ok = self.wait_on(allele_hash=allele_hash)
@@ -231,40 +232,33 @@ class Gather(Worker):
                     msg = 'Failed to wait on allele hash'
                     raise ValueError(msg)
             assert allele_hash in self.results
-            res = self.results.pop(allele_hash)
-            results[allele] = res
-        #
-        if results[site.REF]['status'] == Status_SKIPPED:
-            scores = {alt: -1 for alt in alleles}
-        else:
-            scores = {}
-            ref_loss = results[site.REF]['loss']
-            for allele in alleles:
-                if results[allele]['status'] == Status_SKIPPED:
-                    scores[allele] = -1
-                else:
-                    #scores[allele] = results[allele]['loss'] / ref_loss
-                    scores[allele] = results[allele]['loss']
-        return tuple([scores[al] for al in alleles])
+            al_result = self.results.pop(allele_hash)
+            if al_result['status'] == Status_SKIPPED:
+                scores[allele] = None
+            else:
+                scores[allele] = al_result['loss']
+        return tuple([scores[al] for al in site.alleles])
 
     def run(self):
         self.running = True
 
-        vcf_in = VCF(self.path_input_vcf)
+        vcf_in = VariantFile(self.path_input_vcf)
         pbar = vcf_progress_bar(vcf_in)
-        vcf_in.add_info_to_header({'ID': 'BLOSS', 'Description': 'BERT Loss', 'Type': 'Float', 'Number': 'R'})
-        vcf_out = Writer(self.path_output_vcf, vcf_in)
 
         if self.region:
-            vcf_in = vcf_in(self.region)
+            vcf_in = vcf_in.fetch(region=self.region)
+
+        bloss_info = {'ID': 'BLOSS', 'Description': 'BERT Loss', 'Type': 'Float', 'Number': 'R'}
+        vcf_in.header.add_meta(key="INFO", items=list(bloss_info.items()))
+        vcf_out = VariantFile(self.path_output_vcf, 'w', header=vcf_in.header)
 
         try:
             for site in vcf_in:
                 if not self.running:
                     break
-                pbar(site.CHROM, site.POS)
-                site.INFO['BLOSS'] = self.score_alleles(site)
-                vcf_out.write_record(site)
+                pbar(site.chrom, site.pos)
+                site.info['BLOSS'] = self.score_alleles(site)
+                vcf_out.write(site)
         finally:
             vcf_out.close()
             vcf_in.close()
@@ -291,6 +285,7 @@ class ModelRunner(Worker):
             except Empty:
                 if self.flush:
                     break
+                print("underrun")
                 continue
             input_ids = torch.from_numpy(batch.pop('input_ids')).cuda()
             attention_mask = torch.from_numpy(batch.pop('attention_mask')).cuda()
@@ -307,6 +302,7 @@ class ModelRunner(Worker):
                 labels = (~label_mask * -100) + (label_mask * label_ids)
                 labels = labels.to(outp.logits.device)
                 loss = F.cross_entropy(outp.logits.permute(0, 2, 1), labels, reduction='none')
+                print(loss.cpu().numpy().tolist())
                 loss = torch.sum(loss, axis=-1) / torch.sum(label_mask, axis=-1)
                 batch['loss'] = loss.cpu()
             #pprint({key: (batch[key].shape, batch[key].dtype) for key in batch})
@@ -315,19 +311,19 @@ class ModelRunner(Worker):
 class ReferenceLookup(object):
     def __init__(self, path_ref=None, window_size=300):
         self.path_ref = path_ref
-        self.ref = Fasta(self.path_ref)
+        self.fa_refs = Fasta(self.path_ref)
         self.window_size = window_size
         self._cache = {}
 
     def lookup(self, site):
-        if site.CHROM not in self._cache:
-            self._cache[site.CHROM] = str(self.ref[site.CHROM]).upper()
-        seq = self._cache[site.CHROM]
-        var_start = site.POS - 1
-        var_end = var_start + len(site.REF)
+        if site.chrom not in self._cache:
+            self._cache[site.chrom] = str(self.fa_refs[site.chrom]).upper()
+        seq = self._cache[site.chrom]
+        var_start = site.pos - 1
+        var_end = var_start + len(site.ref)
         up = seq[var_start - self.window_size:var_start]
         down = seq[var_end:var_end + self.window_size]
-        assert seq[var_start - self.window_size:var_end + self.window_size] == (up + site.REF + down)
+        assert seq[var_start - self.window_size:var_end + self.window_size] == (up + site.ref + down)
         return (up, down)
 
     __call__ = lookup
@@ -419,37 +415,27 @@ class Tokenizer(object):
     __call__ = tokenize
 
 def get_allele_hash(site=None, allele=None):
-    key = f'{site.CHROM}:{site.POS}#{allele}'
+    key = f'{site.chrom}:{site.pos}#{allele}'
     return hash(key)
 
-def gather_vcf(path_vcf_out=None, region=None, query_func=None):
-    vcf_in = VCF(path_input_vcf)
-    # XXX: add interval file support
-    if self.region:
-        vcf_in = vcf_in(self.region)
-
-    for (site_id, site) in enumerate(vcf_in):
-        result = query_func(site_id=site_id)
-
 def iter_vcf(path_input_vcf=None, region=None):
-    vcf_in = VCF(path_input_vcf)
+    vcf_in = VariantFile(path_input_vcf)
     # XXX: add interval file support
     if region:
-        vcf_in = vcf_in(region)
+        vcf_in = vcf_in.fetch(region=region)
 
-    for (site_id, site) in enumerate(vcf_in):
-        yield (site_id, site)
+    for site in vcf_in:
+        yield site
 
 def build_inputs(vcf_itr=None, ref_lookup=None, masker=None, tokenizer=None, out_q=None):
-    for (site_id, site) in vcf_itr:
+    for site in vcf_itr:
         tmpl = {'status': Status_PENDING}
         (ref_up, ref_down) = ref_lookup(site)
         (mask_up, mask_down) = masker(ref_up, ref_down)
         if not (is_dna(ref_up) and is_dna(ref_down)):
             tmpl['status'] = Status_SKIPPED
-        assert is_dna(site.REF)
-        alleles = list(site.ALT) + [site.REF]
-        for allele in alleles:
+        assert is_dna(site.ref)
+        for allele in site.alleles:
             inp = tmpl.copy()
             inp['allele_hash'] = get_allele_hash(site, allele)
             if not is_dna(allele):
