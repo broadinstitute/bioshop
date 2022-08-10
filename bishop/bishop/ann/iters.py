@@ -16,6 +16,7 @@ def flank_site(itr=None, flanker=None):
     for row in itr:
         site = row['site']
         flanks = flanker.get_flanks(site=site)
+        row['chrom'] = flanks.pop('chrom')
         row['flanks'] = flanks
         yield row
 
@@ -37,22 +38,32 @@ def skip_site(itr=None, skip_filtered=True, skip_ambiguous_bases=True):
 def iter_alleles(itr=None, with_index=False, with_ref_allele=False):
     for row in itr:
         site = row['site']
-        alleles = list(site.alts)
+        if site.alts is None:
+            alleles = list()
+        else:
+            alleles = list(site.alts)
         if with_ref_allele:
             alleles.append(site.ref)
-        for (allele_idx, allele) in enumerate(alleles):
-            allele_row = row.copy()
-            allele_row.update(dict(allele=allele))
-            if with_index:
-                allele_row.update(dict(allele_idx=allele_idx))
-            yield allele_row
+        if alleles:
+            for (allele_idx, allele) in enumerate(alleles):
+                allele_row = row.copy()
+                allele_row.update(dict(allele=allele))
+                if with_index:
+                    allele_row.update(dict(allele_idx=allele_idx))
+                yield allele_row
+        else:
+            yield row
 
 def skip_allele(itr=None, skip_ambiguous_bases=True):
     concrete_bases = set('AGTC')
     for row in itr:
-        allele = row['allele']
-        if skip_ambiguous_bases and \
-            set(str(allele).upper()) - concrete_bases:
-                row['skip_allele'] = True
-                row['skip'] = True
+        if 'allele' not in row:
+            row['skip_allele'] = True
+            row['skip'] = True
+        elif 'skip' not in row:
+            allele = row['allele']
+            if skip_ambiguous_bases and \
+                set(str(allele).upper()) - concrete_bases:
+                    row['skip_allele'] = True
+                    row['skip'] = True
         yield row

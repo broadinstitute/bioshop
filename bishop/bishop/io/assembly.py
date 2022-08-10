@@ -100,7 +100,6 @@ def load_assembly(asm_name=None, cache_dir=None):
     if not os.path.isfile(asm_jsfn):
         os.makedirs(asm_path, exist_ok=True)
         asm_metadata = download_genome_assembly_metadata(asm_name)
-        asm_metadata['local_genomic_fna'] = asm_fafn
         asm_url = asm_metadata['genomic_fna']
         download_genome_assembly(asm_url, asm_fafn)
         with open(asm_jsfn, 'w') as fh:
@@ -108,4 +107,6 @@ def load_assembly(asm_name=None, cache_dir=None):
     else:
         with open(asm_jsfn) as fh:
             asm_metadata = json.load(fh)
+    # update to point locally
+    asm_metadata['local_genomic_fna'] = asm_fafn
     return asm_metadata

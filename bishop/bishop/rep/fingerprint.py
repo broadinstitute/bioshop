@@ -1,4 +1,4 @@
-from . alignment import RefAltAlignment, AltAltAlignment
+from . alignment import RefAltAlignment, AltAltAlignment, LiteralFingerprint, CigarFingerprint
 
 class AlleleFingerprint(object):
     def __init__(self, chrom=None, pos=None, ref=None, alt=None, flanks=None):
@@ -11,6 +11,9 @@ class AlleleFingerprint(object):
     
     def __str__(self):
         return str(self.literal_fingerprint)
+    
+    def __repr__(self):
+        return str(self)
     
     def match(self, other, debug=False):
         al = AltAltAlignment(self, other)

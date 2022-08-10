@@ -12,6 +12,9 @@ class LiteralFingerprint:
     def __str__(self):
         return f'{self.chrom}:{self.pos}#{self.ref}>{self.alt}'
 
+    def __repr__(self):
+        return str(self)
+
     def __hash__(self):
         return hash(str(self))
     
@@ -27,6 +30,9 @@ class CigarFingerprint:
 
     def __str__(self):
         return f'{self.chrom}:{self.pos}#{self.cigar}'
+
+    def __repr__(self):
+        return str(self)
 
     def __hash__(self):
         return hash(str(self))

@@ -19,4 +19,4 @@ class VariantFlanks(object):
         down = seq[var_end:var_end + self.flank_len]
 
         assert seq[var_start - self.flank_len:var_end + self.flank_len] == (up + site.ref + down)
-        return {'flank_up': up, 'flank_down': down}
+        return {'chrom': chrom, 'flank_up': up, 'flank_down': down}

@@ -15,6 +15,10 @@ class CuratedAssembly:
             scheme = self.metadata.detect_scheme(contig_names, ignore_missing=ignore_missing)
         self.scheme = scheme
 
+    def _reduce_hook(self):
+        kw = {"metadata": self.metadata, "scheme": self.scheme}
+        return kw
+
     def get_contig_names(self):
         raise NotImplementedError
 
@@ -51,6 +55,25 @@ class GenomeAssemblyMetadata:
         self.accession = accession
         self.genomic_fna = genomic_fna
         self.units = units
+        self._genome = None
+
+    def __getstate__(self):
+        return (
+            self.name,
+            self.organism,
+            self.accession,
+            self.genomic_fna,
+            self.units
+        )
+
+    def __setstate__(self, state):
+        (
+            self.name,
+            self.organism,
+            self.accession,
+            self.genomic_fna,
+            self.units
+        ) = state
         self._genome = None
 
     @property

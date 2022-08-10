@@ -19,3 +19,12 @@ class VCF(CuratedAssembly, VariantFile):
         region.contig = self.translate_contig_name(region.contig)
         region = str(region)
         return super().fetch(region=region, **kw)
+    
+    def __reduce__(self):
+        kw = self._reduce_hook()
+        args = ((self.filename,), kw)
+        return (self.__expand__, args)
+
+    @classmethod
+    def __expand__(cls, args, kw):
+        return cls(*args, **kw)
