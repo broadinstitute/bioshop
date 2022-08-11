@@ -2,6 +2,23 @@ import re
 import math
 import portion as P
 
+def interval_cmp(func):
+    def cmpfunc(self, other):
+        if type(other) is str:
+            # try to convert to region
+            other = self.__class__(other)
+        if isinstance(other, self.__class__):
+            if self.chrom != other.chrom:
+                msg = f'regions have mismatched chrom ({self.chrom} != {other.chrom})'
+                raise ValueError(msg)
+            other = other.interval
+        elif type(other) in (int, float):
+            other = P.singleton(other)
+        if not isinstance(other, P.Interval):
+            raise TypeError(other)
+        return func(self, other)
+    return cmpfunc
+
 class Region(object):
     re_region = re.compile('(\w+):?(\d+)?-?(\d+)?')
 
@@ -60,9 +77,6 @@ class Region(object):
     def __str__(self):
         return f'{self.chrom}:{self.interval.lower}-{self.interval.upper}'
 
-    def __len__(self):
-        return len(self.interval)
-
     def split(self, step=None):
         for pos in P.iterate(self.interval, step=step):
             yield self.__class__(self.chrom, pos, pos + step)
@@ -72,3 +86,64 @@ class Region(object):
         for pos in P.iterate(self.interval, step=step):
             yield self.__class__(self.chrom, pos, pos + step)
 
+    def __len__(self):
+        return self.interval.__len__
+
+    @interval_cmp
+    def __lt__(self, other):
+        return self.interval.__lt__(other)
+
+    @interval_cmp
+    def __gt__(self, other):
+        return self.interval.__gt__(other)
+
+    @interval_cmp
+    def __le__(self, other):
+        return self.interval.__le__(other)
+
+    @interval_cmp
+    def __ge__(self, other):
+        return self.interval.__ge__(other)
+
+    @interval_cmp
+    def __eq__(self, other):
+        return self.interval.__eq__(other)
+
+    @interval_cmp
+    def __ne__(self, other):
+        return self.interval.__ne__(other)
+
+    @interval_cmp
+    def overlaps(self, other):
+        return self.interval.overlaps(other)
+
+    @interval_cmp
+    def contains(self, other):
+        return self.interval.contains(other)
+
+    @interval_cmp
+    def __contains__(self, other):
+        return self.interval.contains(other)
+
+def run_tests():
+    r1 = Region('chr1:100-200')
+    r2 = Region('chr1:100-200')
+    assert r1 == r2
+    r2 = Region('chr1:200-300')
+    assert r2 >= r1
+    assert r1.overlaps(r2)
+    r2 = Region('chr1:201-300')
+    assert r2 > r1
+    assert not r1.overlaps(r2)
+    assert 10 < r1
+    assert 210 > r1
+    assert 110 in r1
+    assert r1.contains(110)
+    assert not r1.contains(r2)
+    r2 = Region('chr1:110-150')
+    assert r2 in r1
+    assert r1 == 'chr1:100-200'
+    assert r1 == Region('chr1:100-200')
+
+if __name__ == '__main__':
+    run_tests()
