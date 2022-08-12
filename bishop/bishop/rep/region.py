@@ -60,14 +60,12 @@ class Region(object):
     def get_stop(self):
         return self.interval.upper
     def set_stop(self, val):
-        #val = max(self.interval.lower, val)
         self.interval = P.closed(self.interval.lower, val)
     stop = property(get_stop, set_stop)
 
     def get_start(self):
         return self.interval.lower
     def set_start(self, val):
-        #val = min(val, self.interval.upper)
         self.interval = P.closed(val, self.interval.upper)
     start = property(get_start, set_start)
 
@@ -87,7 +85,7 @@ class Region(object):
             yield self.__class__(self.chrom, pos, pos + step)
 
     def __len__(self):
-        return self.interval.__len__
+        return abs(self.interval.upper - self.interval.lower)
 
     @interval_cmp
     def __lt__(self, other):
@@ -125,6 +123,45 @@ class Region(object):
     def __contains__(self, other):
         return self.interval.contains(other)
 
+class RegionList:
+    def __init__(self, by_chrom=None):
+        if by_chrom is None:
+            by_chrom = dict()
+        self.by_chrom = by_chrom.copy()
+
+    @staticmethod
+    def _concat_values(this, that):
+        return tuple(set(this + that))
+
+    def add_regions(self, regions=None, value=None):
+        by_chrom_update = {}
+        for region in regions:
+            if region.chrom not in by_chrom_update:
+                by_chrom_update[region.chrom] = P.IntervalDict()
+            by_chrom_update[region.chrom][region.interval] = (value,)
+        for chrom in by_chrom_update:
+            if chrom not in self.by_chrom:
+                self.by_chrom[chrom] = by_chrom_update[chrom]
+            else:
+                self.by_chrom[chrom] = \
+                    self.by_chrom[chrom].combine(by_chrom_update[chrom], self._concat_values)
+
+    def __getitem__(self, region=None):
+        if not isinstance(region, Region):
+            region = Region(region)
+        if region.chrom not in self.by_chrom:
+            raise KeyError(region.chrom)
+        key = region.interval
+        if key.upper == key.lower:
+            key = key.upper
+        return set(self.by_chrom[region.chrom][key])
+    
+    def get(self, region=None, default=None):
+        try:
+            return self[region]
+        except KeyError:
+            return default
+
 def run_tests():
     r1 = Region('chr1:100-200')
     r2 = Region('chr1:100-200')
@@ -144,6 +181,14 @@ def run_tests():
     assert r2 in r1
     assert r1 == 'chr1:100-200'
     assert r1 == Region('chr1:100-200')
+    r1 = Region('chr1', 1_000, 5_000)
+    rl = RegionList()
+    shards = [x for (i,x) in enumerate(r1.shard(6)) if i % 2]
+    rl.add_regions(shards, 'a')
+    rl.add_regions(shards, 'b')
+    rl.add_regions(shards, 'c')
+    res = rl['chr1:1700']
+    assert res == set('abc')
 
 if __name__ == '__main__':
     run_tests()
