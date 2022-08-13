@@ -1,6 +1,7 @@
 import re
 import math
 import portion as P
+import pandas as pd
 
 def interval_cmp(func):
     def cmpfunc(self, other):
@@ -51,6 +52,10 @@ class Region(object):
             start if start is not None else vals[1],
             stop if stop is not None else vals[2],
         )
+
+    @property
+    def pd_interval(self):
+        return pd.Interval(self.start, self.stop, closed='both')
 
     def get_contig(self):
         return self.chrom
@@ -125,7 +130,8 @@ class Region(object):
         return self.interval.contains(other)
 
 class RegionList:
-    def __init__(self, by_chrom=None):
+    def __init__(self, name=None, by_chrom=None):
+        self.name = name
         if by_chrom is None:
             by_chrom = dict()
         self.by_chrom = by_chrom.copy()
@@ -148,6 +154,54 @@ class RegionList:
             other = Region(other)
         return other.interval in self.by_chrom.get(other.chrom, P.empty())
 
+    def __contains__(self, other):
+        return self.contains(other)
+
+class RegionMap:
+    def __init__(self, region_map=None):
+        self.region_map = region_map or dict()
+
+    def add_region_list(self, region_list=None):
+        self.region_map[region_list.name] = region_list
+
+    def contains(self, other):
+        if not isinstance(other, Region):
+            other = Region(other)
+        for name in self.region_map:
+            if other in self.region_map[name]:
+                return True
+        return False
+    
+    def __contains__(self, other):
+        return self.contains(other)
+
+    def overlaps_with(self, other):
+        hits = []
+        if not isinstance(other, Region):
+            other = Region(other)
+        for name in self.region_map:
+            if other in self.region_map[name]:
+                hits.append(name)
+        return tuple(hits)
+
+class PandasRegionMap:
+    def __init__(self, by_chrom=None):
+        self.by_chrom = by_chrom
+
+    def overlaps(self, other):
+        if not isinstance(other, Region):
+            other = Region(other)
+        dfch = self.by_chrom[other.chrom]
+        return dfch[dfch.index.overlaps(other.pd_interval)]
+
+    def overlaps_with(self, other):
+        overlaps = self.overlaps(other)
+        return overlaps.name.unique().tolist()
+
+    def contains(self, other):
+        hits = self.overlaps(other)
+        return bool(hits.size > 0)
+    
     def __contains__(self, other):
         return self.contains(other)
 
