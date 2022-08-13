@@ -6,9 +6,9 @@ def interval_cmp(func):
     def cmpfunc(self, other):
         if type(other) is str:
             # try to convert to region
-            other = self.__class__(other)
-        if isinstance(other, self.__class__):
-            if self.chrom != other.chrom:
+            other = Region(other)
+        if isinstance(other, Region):
+            if isinstance(self, Region) and self.chrom != other.chrom:
                 msg = f'regions have mismatched chrom ({self.chrom} != {other.chrom})'
                 raise ValueError(msg)
             other = other.interval
@@ -23,7 +23,8 @@ class Region(object):
     re_region = re.compile('(\w+):?(\d+)?-?(\d+)?')
 
     def __init__(self, chrom=None, start=None, stop=None, contig=None):
-        assert (bool(chrom) ^ bool(contig))
+        if not (bool(chrom) ^ bool(contig)):
+            raise TypeError(f'chrom must be set')
         chrom = chrom or contig
         (self.chrom, start, stop) = \
             self._parse_region(chrom=chrom, start=start, stop=stop)
@@ -37,13 +38,13 @@ class Region(object):
     def _parse_region(self, chrom=None, start=None, stop=None):
         m = self.re_region.match(chrom)
         if not m:
-            raise ValueError(f'unknown region format')
+            raise TypeError(f'unknown region format')
         vals = [m.groups()[0]] + [int(val) if val is not None else None for val in m.groups()[1:]]
         if start is not None and vals[1] is not None:
-            raise ValueError('conflicting values for start')
+            raise TypeError('conflicting values for start')
         start = start if start is not None else vals[1]
         if stop is not None and vals[2] is not None:
-            raise ValueError('conflicting values for stop')
+            raise TypeError('conflicting values for stop')
         stop = stop if stop is not None else vals[2]
         return (
             vals[0],
@@ -129,38 +130,26 @@ class RegionList:
             by_chrom = dict()
         self.by_chrom = by_chrom.copy()
 
-    @staticmethod
-    def _concat_values(this, that):
-        return tuple(set(this + that))
-
-    def add_regions(self, regions=None, value=None):
+    def add_regions(self, regions=None):
         by_chrom_update = {}
         for region in regions:
             if region.chrom not in by_chrom_update:
-                by_chrom_update[region.chrom] = P.IntervalDict()
-            by_chrom_update[region.chrom][region.interval] = (value,)
+                by_chrom_update[region.chrom] = list()
+            by_chrom_update[region.chrom].append(region.interval)
+        by_chrom_update = {key: P.Interval(*val) for (key, val) in by_chrom_update.items()}
         for chrom in by_chrom_update:
             if chrom not in self.by_chrom:
                 self.by_chrom[chrom] = by_chrom_update[chrom]
             else:
-                self.by_chrom[chrom] = \
-                    self.by_chrom[chrom].combine(by_chrom_update[chrom], self._concat_values)
+                self.by_chrom[chrom] |= by_chrom_update[chrom]
 
-    def __getitem__(self, region=None):
-        if not isinstance(region, Region):
-            region = Region(region)
-        if region.chrom not in self.by_chrom:
-            raise KeyError(region.chrom)
-        key = region.interval
-        if key.upper == key.lower:
-            key = key.upper
-        return set(self.by_chrom[region.chrom][key])
-    
-    def get(self, region=None, default=None):
-        try:
-            return self[region]
-        except KeyError:
-            return default
+    def contains(self, other):
+        if not isinstance(other, Region):
+            other = Region(other)
+        return other.interval in self.by_chrom.get(other.chrom, P.empty())
+
+    def __contains__(self, other):
+        return self.contains(other)
 
 def run_tests():
     r1 = Region('chr1:100-200')
@@ -184,11 +173,9 @@ def run_tests():
     r1 = Region('chr1', 1_000, 5_000)
     rl = RegionList()
     shards = [x for (i,x) in enumerate(r1.shard(6)) if i % 2]
-    rl.add_regions(shards, 'a')
-    rl.add_regions(shards, 'b')
-    rl.add_regions(shards, 'c')
-    res = rl['chr1:1700']
-    assert res == set('abc')
+    rl.add_regions(shards)
+    assert 'chr1:1700' in rl
+    assert 'chr2:1700' not in rl
 
 if __name__ == '__main__':
     run_tests()
