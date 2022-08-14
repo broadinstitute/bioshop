@@ -1,4 +1,5 @@
 import multiprocessing as mp
+import time
 
 from . iters import *
 from .. rep.region import Region
@@ -26,9 +27,11 @@ def fingerprint_allele(itr):
             )
         yield row
 
-def fingerprint_vcf(vcf=None, region=None, flanker=None):
+def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None):
     itr = iter_sites(vcf=vcf, with_index=True, region=region)
     itr = flank_site(itr=itr, flanker=flanker)
+    if overlaps is not None:
+        itr = overlaps_with_site(itr, overlaps=overlaps)
     itr = skip_site(itr=itr)
     itr = iter_alleles(itr=itr, with_index=True)
     itr = skip_allele(itr=itr)
@@ -52,7 +55,7 @@ class IndexTask:
             region = Region(region)
         regions = region.split(chunk_size)
         pool = mp.Pool()
-        yield from pool.imap(self, regions)
+        yield from pool.imap(self, regions, 16)
 
 class AlleleIndex(object):
     def __init__(self, region=None, fingerprints=None):
@@ -81,16 +84,17 @@ class AlleleIndex(object):
         return False
 
 class ComparisonTask:
-    def __init__(self, query_vcf=None, target_vcf=None, flanker=None):
+    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None):
         self.query_vcf = query_vcf
         self.target_vcf = target_vcf
         self.flanker = flanker
+        self.overlaps = overlaps
         self.index_task = IndexTask(self.target_vcf, flanker=self.flanker)
 
     def __call__(self, region=None, slop=50):
         cache = []
         target_prints = self.index_task.fingerprint(region=region)
-        query_prints = fingerprint_vcf(vcf=self.query_vcf, region=region, flanker=self.flanker)
+        query_prints = fingerprint_vcf(vcf=self.query_vcf, region=region, flanker=self.flanker, overlaps=self.overlaps)
         last_pos = 0
         for row in query_prints:
             if 'skip' in row:
@@ -100,17 +104,19 @@ class ComparisonTask:
                 if target_prints is None:
                     break
                 try:
+                    ts = time.time()
                     prints = next(target_prints)
+                    print(f'waited {time.time() - ts}')
                 except StopIteration:
                     target_prints = None
                     break
                 last_pos = prints.region.interval.upper
+                print(last_pos)
                 cache = cache[-2:] + [prints]
             alfp = row['allele_fingerprint']
+            row['fingerprint_match'] = False
             for index in cache:
                 if index.match(alfp):
-                    row['matched'] = True
+                    row['fingerprint_match'] = True
                     break
             yield row
-
-

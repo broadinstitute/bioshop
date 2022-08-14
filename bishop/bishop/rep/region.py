@@ -23,9 +23,16 @@ def interval_cmp(func):
 class Region(object):
     re_region = re.compile('(\w+):?(\d+)?-?(\d+)?')
 
-    def __init__(self, chrom=None, start=None, stop=None, contig=None):
+    def __init__(self, chrom=None, start=None, stop=None, contig=None, midpoint=None, width=None):
         if not (bool(chrom) ^ bool(contig)):
             raise TypeError(f'chrom must be set')
+        if midpoint is not None:
+            assert type(midpoint) in (int, float)
+            assert start is None and stop is None
+            # XXX support odd width values
+            winlen = width // 2
+            start = midpoint - winlen
+            stop = midpoint + winlen
         chrom = chrom or contig
         (self.chrom, start, stop) = \
             self._parse_region(chrom=chrom, start=start, stop=stop)
@@ -185,8 +192,9 @@ class RegionMap:
         return tuple(hits)
 
 class PandasRegionMap:
-    def __init__(self, by_chrom=None):
+    def __init__(self, by_chrom=None, names=None):
         self.by_chrom = by_chrom
+        self.names = tuple(names) if names else None
 
     def overlaps(self, other):
         if not isinstance(other, Region):

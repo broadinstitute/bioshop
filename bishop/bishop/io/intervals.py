@@ -2,15 +2,16 @@ import fsspec as FS
 import pandas as pd
 from .. rep.region import Region, RegionList, RegionMap, PandasRegionMap
 
-def load_interval_file_core(path=None, name=None, comment=None, index_offset=0, sep='\t', header=('chrom', 'start', 'stop'), astype='regionlist'):
+def load_interval_file_core(path=None, name=None, comment=None, index_offset=0, sep='\t', header=('chrom', 'start', 'stop'), zero_index=True, astype='regionlist'):
     if astype not in ('region', 'regionlist', 'dataframe'):
         raise TypeError(f'illegal value for astype {astype}')
     if name is None:
         # grab the filename without the extension
         name = path.split('/')[-1].split('.')[0]
     intervals = pd.read_csv(path, sep=sep, comment=comment, header=None, names=header)
-    intervals.start += index_offset
-    intervals.stop += index_offset
+    if zero_index:
+        intervals.start += index_offset
+        intervals.stop += index_offset
     intervals['name'] = name
     if astype == 'dataframe':
         to_interval = lambda row: pd.Interval(row.start, row.stop, closed='both')
@@ -104,9 +105,10 @@ def load_interval_lists(interval_files, astype=None):
     # pandas
     if astype == 'dataframe':
         df = pd.concat(interval_lists)
+        names = df.name.unique().tolist()
         df.index = pd.IntervalIndex(df.interval)
         gb = df.groupby('chrom')
         by_chrom = {ch: gb.get_group(ch) for ch in gb.groups}
-        return PandasRegionMap(by_chrom=by_chrom)
+        return PandasRegionMap(by_chrom=by_chrom, names=names)
     # default
     return interval_list

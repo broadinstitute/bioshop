@@ -1,3 +1,5 @@
+import pandas as pd
+
 from .. rep.region import Region
 from .. rep.fingerprint import AlleleFingerprint
 from .. utils import is_concrete_nucleotides
@@ -18,6 +20,16 @@ def flank_site(itr=None, flanker=None):
         flanks = flanker.get_flanks(site=site)
         row['chrom'] = flanks.pop('chrom')
         row['flanks'] = flanks
+        yield row
+
+def overlaps_with_site(itr=None, overlaps=None, slop=5):
+    for row in itr:
+        site = row['site']
+        start = site.pos - slop
+        stop = site.pos + len(site.ref) + slop
+        region = Region(row['chrom'], start, stop)
+        ovset = set(overlaps.overlaps_with(region))
+        row['overlaps_with'] = {nm: nm in ovset for nm in overlaps.names}
         yield row
 
 def skip_site(itr=None, skip_filtered=True, skip_ambiguous_bases=True):
@@ -67,3 +79,27 @@ def skip_allele(itr=None, skip_ambiguous_bases=True):
                     row['skip_allele'] = True
                     row['skip'] = True
         yield row
+
+def custom_itr(itr=None, custom_func=None):
+    for row in itr:
+        row = custom_func(row)
+        yield row
+
+def to_dataframe(itr):
+    rows = []
+    for row in itr:
+        if 'skip' in row:
+            continue
+        if 'site' in row:
+            del row['site']
+        if 'flanks' in row:
+            del row['flanks']
+        if 'overlaps_with' in row:
+            for name in row['overlaps_with']:
+                new_name = f'overlaps_with_{name}'
+                row[new_name] = row['overlaps_with'][name]
+            del row['overlaps_with']
+        if 'allele_fingerprint' in row:
+            del row['allele_fingerprint']
+        rows.append(row)
+    return pd.DataFrame(rows)
