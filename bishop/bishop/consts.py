@@ -1,5 +1,7 @@
 hg38_url = 'https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/001/405/GCA_000001405.29_GRCh38.p14/GCA_000001405.29_GRCh38.p14_genomic.fna.gz'
 
+jbx_hapmap2_no_giab = 'gs://fc-secure-e98c3f3b-4c74-46de-b521-f8b1df9b0892/530da9cc-092b-4ca0-805d-0e481b6b9619/UltimaGenomicsJointGenotyping/30300e12-4274-48ab-824b-7968ced827e8/call-FinalGatherVcf/HapMap2_2_1_no_giab.vcf.gz'
+
 vcf_paths = {
     '1000g': 'http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz',
     'dbsnp': 'https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.39.gz',

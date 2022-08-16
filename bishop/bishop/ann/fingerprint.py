@@ -50,12 +50,12 @@ class IndexTask:
     def __call__(self, region=None):
         return fingerprint_and_index_vcf(vcf=self.vcf, region=region, flanker=self.flanker)
 
-    def fingerprint(self, region=None, chunk_size=10_000):
+    def fingerprint(self, region=None, chunk_size=50_000):
         if not isinstance(region, Region):
             region = Region(region)
         regions = region.split(chunk_size)
         pool = mp.Pool()
-        yield from pool.imap(self, regions, 16)
+        yield from pool.imap(self, regions)
 
 class AlleleIndex(object):
     def __init__(self, region=None, fingerprints=None):
