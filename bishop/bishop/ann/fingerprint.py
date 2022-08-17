@@ -4,6 +4,7 @@ import time
 from . iters import *
 from .. rep.region import Region
 from .. rep.fingerprint import AlleleFingerprint
+from .. utils import vcf_progress_bar
 
 def build_allele_index(itr):
     fingerprints = {}
@@ -27,7 +28,10 @@ def fingerprint_allele(itr):
             )
         yield row
 
-def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None):
+def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=50):
+    if slop > 0:
+        region.start = max(0, region.start - slop)
+        region.stop = region.stop + slop
     itr = iter_sites(vcf=vcf, with_index=True, region=region)
     itr = flank_site(itr=itr, flanker=flanker)
     if overlaps is not None:
@@ -83,7 +87,7 @@ class AlleleIndex(object):
         # no match
         return False
 
-class ComparisonTask:
+class OldComparisonTask:
     def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None):
         self.query_vcf = query_vcf
         self.target_vcf = target_vcf
@@ -120,3 +124,42 @@ class ComparisonTask:
                     row['fingerprint_match'] = True
                     break
             yield row
+
+class ComparisonTask:
+    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50):
+        self.query_vcf = query_vcf
+        self.target_vcf = target_vcf
+        self.flanker = flanker
+        self.overlaps = overlaps
+        self.annotate = annotate
+        self.slop = slop
+    
+    def __call__(self, region=None):
+        target_prints = fingerprint_and_index_vcf(vcf=self.target_vcf, region=region, flanker=self.flanker)
+        query_prints = fingerprint_vcf(vcf=self.query_vcf, region=region, flanker=self.flanker, overlaps=self.overlaps, slop=self.slop)
+        if self.annotate is not None:
+            query_prints = custom_itr(query_prints, self.annotate)
+        for row in query_prints:
+            if 'skip' not in row:
+                alfp = row['allele_fingerprint']
+                row['fingerprint_match'] = \
+                    target_prints.match(row['allele_fingerprint'])
+            # not pickle-able
+            del row['site']
+            yield row
+
+    def batch_call(self, region=None, **kw):
+        batch = self(region=region, **kw)
+        return (region, list(batch))
+
+    def compare_region(self, region=None, chunk_size=100_000):
+        if not isinstance(region, Region):
+            region = Region(region)
+        regions = region.split(chunk_size)
+        all_rows = []
+        with mp.Pool() as pool:
+            itr = pool.imap(self.batch_call, regions)
+            for (region, rows) in itr:
+                print(region)
+                all_rows.extend(rows)
+        return all_rows
