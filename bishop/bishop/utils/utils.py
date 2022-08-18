@@ -4,6 +4,9 @@ import requests
 import tempfile
 
 from tqdm import tqdm
+from cachier import cachier
+
+from .. rep.region import Region
 
 __all__ = [
     'download_genome',
@@ -11,8 +14,27 @@ __all__ = [
     'get_cache_dir',
     'is_concrete_nucleotides',
     'seq_progress_bar',
-    'vcf_progress_bar'
+    'vcf_progress_bar',
+    'region_progress_bar',
+    'cache_func'
 ]
+
+def region_progress_bar(region=None):
+    if not isinstance(region, Region):
+        region = Region(region)
+
+    pbar = tqdm(
+        total=len(region),
+        desc=str(region), 
+        unit="base",
+        unit_scale=True,
+        colour='green'
+    )
+    ns = dict(pbar=pbar, last_pos=region.start)
+    def update(pos=None):
+        ns['pbar'].update(pos - ns['last_pos'])
+        ns['last_pos'] = pos
+    return update
 
 def seq_progress_bar(seqlen_map=None):
     ns = dict(chrom=None, pbar=None, last_pos=0)
@@ -52,6 +74,10 @@ def get_cache_dir():
         user_homedir = os.path.expanduser('~')
         cache_dir = f'{user_homedir}/.cache'
     return cache_dir
+
+def cache_func(*args, **kw):
+    cache_dir = get_cache_dir()
+    return cachier(*args, cache_dir=cache_dir, **kw)
 
 def download_genome(url, output_fn, chunk_size=None):
     chunk_size = chunk_size or (1 << 20)

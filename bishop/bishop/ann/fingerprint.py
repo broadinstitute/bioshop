@@ -4,7 +4,7 @@ import time
 from . iters import *
 from .. rep.region import Region
 from .. rep.fingerprint import AlleleFingerprint
-from .. utils import vcf_progress_bar
+from .. utils import region_progress_bar
 
 def build_allele_index(itr):
     fingerprints = {}
@@ -126,13 +126,14 @@ class OldComparisonTask:
             yield row
 
 class ComparisonTask:
-    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50):
+    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50, progress_bar=True):
         self.query_vcf = query_vcf
         self.target_vcf = target_vcf
         self.flanker = flanker
         self.overlaps = overlaps
         self.annotate = annotate
         self.slop = slop
+        self.progress_bar = progress_bar
     
     def __call__(self, region=None):
         target_prints = fingerprint_and_index_vcf(vcf=self.target_vcf, region=region, flanker=self.flanker)
@@ -155,11 +156,16 @@ class ComparisonTask:
     def compare_region(self, region=None, chunk_size=100_000):
         if not isinstance(region, Region):
             region = Region(region)
+        if self.progress_bar:
+            pbar = region_progress_bar(region=region)
+        else:
+            pbar = None
         regions = region.split(chunk_size)
         all_rows = []
         with mp.Pool() as pool:
             itr = pool.imap(self.batch_call, regions)
-            for (region, rows) in itr:
-                print(region)
+            for (cur_region, rows) in itr:
+                if pbar:
+                    pbar(pos=cur_region.stop)
                 all_rows.extend(rows)
         return all_rows

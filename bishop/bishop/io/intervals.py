@@ -1,5 +1,6 @@
 import fsspec as FS
 import pandas as pd
+from .. utils import cache_func
 from .. rep.region import Region, RegionList, RegionMap, PandasRegionMap
 
 def load_interval_file_core(path=None, name=None, comment=None, index_offset=0, sep='\t', header=('chrom', 'start', 'stop'), zero_index=True, astype='regionlist'):
@@ -88,6 +89,15 @@ def load_interval_list(path=None, filetype=None, **kw):
     else:
         raise TypeError(f'unknown interval file type')
 
+def hash_interval_files(args, kw):
+    interval_files = args[0]
+    interval_files = tuple([tuple(sorted(it.items())) for it in interval_files])
+    kw = tuple(sorted(kw.items()))
+    state = (interval_files, kw)
+    hashval = hash(state)
+    return hashval
+
+@cache_func(hash_params=hash_interval_files)
 def load_interval_lists(interval_files, astype=None):
     interval_lists = []
     astype = astype or 'regionlist'
