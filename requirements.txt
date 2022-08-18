@@ -4,3 +4,8 @@ wandb
 gcsfs
 pyfaidx 
 cyvcf2
+pandas
+numpy
+pyfaidx
+cyvcf2
+tqdm

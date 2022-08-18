@@ -1,0 +1,11 @@
+*.vcf*
+*.local*
+__pycache__
+.*.sw?*
+tarpit
+*.pickle
+*.sh
+cache
+*.bak
+*.csv
+*.dtd
