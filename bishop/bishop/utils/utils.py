@@ -16,7 +16,8 @@ __all__ = [
     'seq_progress_bar',
     'vcf_progress_bar',
     'region_progress_bar',
-    'cache_func'
+    'cache_func',
+    'softhash',
 ]
 
 def region_progress_bar(region=None):
@@ -112,4 +113,7 @@ CONCRETE_NUCLEOTIDES = set('AGTC')
 def is_concrete_nucleotides(nucstr):
     nucs = set(str(nucstr).upper())
     return not bool(nucs - CONCRETE_NUCLEOTIDES)
+
+def softhash(content: bytes, salt: int=0, mask: int=0xFFFFFFFF):
+    return zlib.adler32(content, salt) & mask
 

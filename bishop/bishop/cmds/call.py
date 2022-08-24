@@ -2,13 +2,13 @@ import time
 import random
 from pprint import pprint
 
-from bishop.rep.assembly import GenomeAssemblyMetadata
-from bishop.rep.vcf import VCF
-from bishop.rep.region import Region
-from bishop.ann.flank import VariantFlanks
-from bishop.ann.iters import *
-from bishop.ann.fingerprint import ComparisonTask
-from bishop.io.intervals import load_interval_lists
+from .. rep.assembly import GenomeAssemblyMetadata
+from .. rep.vcf import VCF
+from .. rep.region import Region
+from .. ann.flank import VariantFlanks
+from .. ann.iters import *
+from .. ann.fingerprint import ComparisonTask
+from .. io.intervals import load_interval_lists
 
 from pysam import VariantFile
 
@@ -61,9 +61,6 @@ def ack(query_path, region):
     return df
 
 if __name__ == '__main__':
-    query_path = sys.argv[1]
-    target_path = sys.argv[2]
-    region = 'chr1:50000000-100000000'
-    region = 'chr2:50000000-100000000'
-    region = 'chr3:50000000-100000000'
-    ack(query_path, target_path, region)
+    call_vcf = sys.argv[1]
+    region = sys.argv[2]
+    ack(call_vcf, target_path, region)

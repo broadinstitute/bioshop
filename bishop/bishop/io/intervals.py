@@ -3,6 +3,7 @@ import pandas as pd
 from .. utils import cache_func
 from .. rep.region import Region, RegionList, RegionMap, PandasRegionMap
 
+@cache_func()
 def load_interval_file_core(path=None, name=None, comment=None, index_offset=0, sep='\t', header=('chrom', 'start', 'stop'), zero_index=True, astype='regionlist'):
     if astype not in ('region', 'regionlist', 'dataframe'):
         raise TypeError(f'illegal value for astype {astype}')
@@ -41,6 +42,7 @@ def load_gatk_interval_file(path=None, **kw):
 def load_bed_interval_file(path=None, **kw):
     raise NotImplementedError
 
+@cache_func()
 def detect_interval_filetype(path=None):
     hints = {'picard': 0, 'bed': 0, 'gatk': 0}
     ext = path.lower().split('.')[-1]
@@ -89,15 +91,6 @@ def load_interval_list(path=None, filetype=None, **kw):
     else:
         raise TypeError(f'unknown interval file type')
 
-def hash_interval_files(args, kw):
-    interval_files = args[0]
-    interval_files = tuple([tuple(sorted(it.items())) for it in interval_files])
-    kw = tuple(sorted(kw.items()))
-    state = (interval_files, kw)
-    hashval = hash(state)
-    return hashval
-
-@cache_func(hash_params=hash_interval_files)
 def load_interval_lists(interval_files, astype=None):
     interval_lists = []
     astype = astype or 'regionlist'
@@ -122,3 +115,11 @@ def load_interval_lists(interval_files, astype=None):
         return PandasRegionMap(by_chrom=by_chrom, names=names)
     # default
     return interval_list
+
+def load_intervals_from_csv(csv_path=None, astype=None):
+    keys = ('name', 'path')
+    to_loadpsec = lambda ln: dict(zip(keys, ln.strip().split(',')))
+    line_ok = lambda ln: bool(ln.strip()) and (ln[0] != '#')
+    with open(csv_path, 'r') as fh:
+        interval_files = [to_loadpsec(line) for line in fh if line_ok(line)]
+    return load_interval_lists(interval_files, astype=astype)

@@ -88,12 +88,12 @@ def custom_itr(itr=None, custom_func=None):
 def to_dataframe(itr):
     rows = []
     for row in itr:
-        if 'skip' in row:
-            continue
         if 'site' in row:
             del row['site']
         if 'flanks' in row:
             del row['flanks']
+        if 'skip' in row:
+            continue
         if 'overlaps_with' in row:
             for name in row['overlaps_with']:
                 new_name = f'overlaps_with_{name}'
