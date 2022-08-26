@@ -4,6 +4,18 @@ from .. rep.region import Region
 from .. rep.fingerprint import AlleleFingerprint
 from .. utils import is_concrete_nucleotides
 
+def batcher(itr=None, batch_size=None, include_skips=False):
+    batch = []
+    for row in itr:
+        if not include_skips and 'skip' in row:
+            continue
+        batch.append(row)
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
+    if len(batch):
+        yield batch
+
 def iter_sites(vcf=None, with_index=False, region=None):
     if isinstance(region, Region):
         region = str(region)

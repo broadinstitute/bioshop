@@ -6,10 +6,13 @@ from sklearn.preprocessing import *
 from sklearn.neighbors import *
 from sklearn.ensemble import *
 from sklearn.neural_network import *
+
 import pickle
 import numpy as np
 import pandas as pd
 import sys
+
+from .. ann.classify import Classifier
 
 Classifiers = {
     'rf': RandomForestClassifier,
@@ -43,11 +46,11 @@ parser.add_argument(
     help='Classifier to use',
 )
 parser.add_argument(
-    '--split',
-    dest='split_ratio',
+    '--test-frac',
+    dest='test_frac',
     default=.3,
     type=float,
-    help='Split ratio between train and eval',
+    help='Fraction to hold in reserve for testing'
 )
 parser.add_argument(
     '--random-seed',
@@ -92,29 +95,14 @@ def prepare_dataframe(df_list=None, random_seed=None):
     df = df.replace(dict(variant_type=dict(SNP=0, INDEL=1)))
     return df
 
-def split_dataset(df=None, split_ratio=0.3, random_seed=None):
-    training_cols = [col for col in df.columns if col != 'label']
-    train_ds = df[training_cols].to_numpy()
-    #XXX: options for pre-procesing?
-    #train_ds = StandardScaler().fit_transform(train_ds)
-    labels_ds = df['label'].to_numpy()
-    test_count = int(round(len(train_ds) * split_ratio))
-    (train_input, train_labels) = (train_ds[:test_count], labels_ds[:test_count])
-    (test_input, test_labels) = (train_ds[test_count:], labels_ds[test_count:])
-    rpt = [
-        f'train set N={np.sum(train_labels)}, {np.sum(train_labels) / len(train_labels) * 100:.02f}% positive',
-        f'test set N={np.sum(test_labels)}, {np.sum(test_labels) / len(test_labels) * 100:.02f}% positive'
-    ]
-    print(str.join('\n', rpt))
-    return (train_input, train_labels, test_input, test_labels)
-
-def fit_classifier(clf_class=None, df=None, split_ratio=None, random_seed=None):
-    (train_input, train_labels, test_input, test_labels) = \
-        split_dataset(df, random_seed=random_seed)
-    clf = clf_class(random_state=random_seed)
+def fit_classifier(clf_class=None, df=None, test_frac=None, random_seed=None):
     clf_name = clf_class.__name__
-    clf.fit(train_input, train_labels)
-    acc = clf.score(test_input, test_labels)
+    kw = {'random_state': random_seed}
+    if clf_name == 'RandomForestClassifier':
+        kw['n_jobs'] = -1
+    clf = clf_class(**kw)
+    clf = Classifier(classifier=clf)
+    acc = clf.fit_and_score(df=df, test_frac=test_frac)
     rpt = f"{clf_name} accuracy with test labels {acc * 100:.02f}%"
     print(rpt)
     return clf
@@ -128,11 +116,10 @@ def main(args):
     clf = fit_classifier(
         clf_class=clf_class, 
         df=df, 
-        split_ratio=args.split_ratio, 
+        test_frac=args.test_frac, 
         random_seed=args.random_seed
     )
-    with open(args.classifier_path, 'wb') as fh:
-        pickle.dump(clf, fh)
+    clf.save_classifier(args.classifier_path)
 
 def validate_args(args):
     pass
