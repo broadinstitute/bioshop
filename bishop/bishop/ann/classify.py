@@ -130,27 +130,29 @@ class AnnotateCozy:
         return row
 
 # XXX: task specific, and cleanup
-def prepare_dataframe(df=None, label='label'):
-    df[label] = df['fingerprint_match'].astype(int)
-    for colname in df.columns:
-        if colname.startswith('overlaps_with_'):
-            df[colname] = df[colname].astype(int)
-
+def prepare_dataframe(df=None):
     df = df.replace([np.inf, -np.inf], np.nan)
     df = df.fillna(0)
-
-    df = df.drop('site_idx', axis=1)
-    df['allele_len'] = df.allele.str.len()
-    df = df.drop('allele', axis=1)
-    df = df.drop('allele_idx', axis=1)
-    df = df.drop('chrom', axis=1)
-    df = df.drop('fingerprint_match', axis=1)
-    df = df.replace(dict(variant_type=dict(SNP=0, INDEL=1)))
     return df
 
-def balance_dataframe(df=None, label='label', random_seed=None):
-    n_classes = df[label].nunique()
-    class_counts = df[label].value_counts().to_list()
+def get_columns_by_prefix(df=None, prefix=None):
+    return [col for col in df.columns if col.startswith(prefix)]
+
+def get_feature_columns(df=None, prefix='feature_'):
+    return get_columns_by_prefix(df=df, prefix=prefix)
+
+def get_label_columns(df=None, prefix='label_'):
+    return get_columns_by_prefix(df=df, prefix=prefix)
+
+def balance_dataframe(df=None, label_cols=None, random_seed=None):
+    if label_cols == None:
+        label_cols = get_label_columns(df)
+    if len(label_cols) > 1:
+        raise NotImplementedError
+    n_classes = len(label_cols)
+    class_counts = []
+    for label in label_cols:
+        class_counts += df[label].value_counts().to_list()
     min_class = np.argmin(class_counts)
     n_examples = np.min(class_counts)
     balanced_ds = []
@@ -161,8 +163,8 @@ def balance_dataframe(df=None, label='label', random_seed=None):
     df = df.sample(frac=1, random_state=random_seed)
     return df
 
-def classify_vcf(vcf=None, region=None, overlaps=None, batch_size=10_000):
-    itr = iter_sites(vcf=vcf, region=region)
+def classify_vcf(vcf=None, region=None, overlaps=None, batch_size=10_000, assembly=None, as_scheme=None):
+    itr = iter_sites(vcf=vcf, region=region, assembly=assembly, as_scheme=as_scheme)
     if overlaps is not None:
         itr = overlaps_with_site(itr, overlaps=overlaps)
     itr = skip_site(itr=itr)
@@ -171,11 +173,13 @@ def classify_vcf(vcf=None, region=None, overlaps=None, batch_size=10_000):
     batches = batcher(itr=itr, batch_size=batch_size)
 
 class ClassifyTask:
-    def __init__(self, vcf=None, classifier=None, overlaps=None, annotate=None):
+    def __init__(self, vcf=None, classifier=None, overlaps=None, annotate=None, assembly=None, as_scheme=None):
         self.vcf = vcf
         self.classifier = classifier
         self.overlaps = overlaps
         self.annotate = annotate
+        self.assembly = assembly
+        self.as_scheme = as_scheme
 
     def __call__(self, region=None):
         return classify_vcf(vcf=self.vcf, region=region, classifier=self.classifier)

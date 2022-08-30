@@ -67,12 +67,13 @@ def etl(
     assembly_name=None,
     strat_intervals=None,
     region=None,
+    as_scheme='ucsc'
 ):
     ga = GenomeAssemblyMetadata.load(assembly_name)
     overlaps = load_interval_lists(strat_intervals, astype='dataframe')
     target_vcf = VCF(target_vcf_path, metadata=ga, ignore_missing=True)
     query_vcf = VCF(query_vcf_path, metadata=ga, ignore_missing=True)
-    flanker = VariantFlanks(assembly=ga, as_scheme='ucsc')
+    flanker = VariantFlanks(assembly=ga, as_scheme=as_scheme)
     annotate_func = AnnotateCozy()
     cmp = ComparisonTask(
         query_vcf=query_vcf,
@@ -80,6 +81,8 @@ def etl(
         flanker=flanker,
         overlaps=overlaps,
         annotate=annotate_func,
+        assembly=ga,
+        as_scheme=as_scheme,
     )
     itr = cmp.compare_region(region=region)
     df = to_dataframe(itr)

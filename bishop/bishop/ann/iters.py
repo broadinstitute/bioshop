@@ -18,18 +18,21 @@ def batcher(itr=None, batch_size=None, include_skips=False):
     if len(batch):
         yield batch
 
-def iter_sites(vcf=None, region=None):
+def iter_sites(vcf=None, region=None, assembly=None, as_scheme=None):
     if isinstance(region, Region):
         region = str(region)
     sites = vcf.fetch(region=region)
     for (site_idx, site) in enumerate(sites):
+        # XXX: dynamic domains?
         row = Precis()
         row.cache.site = site
         row.meta.site_idx = site_idx
         row.meta.pos = site.pos
         row.meta.ref = site.ref
-        # XXX: as scheme?
-        row.meta.chrom = site.chrom
+        if assembly and as_scheme:
+            row.meta.chrom = assembly.as_scheme(site.chrom, as_scheme=as_scheme)
+        else:
+            row.meta.chrom = site.chrom
         yield row
 
 def flank_site(itr=None, flanker=None):

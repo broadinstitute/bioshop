@@ -27,11 +27,11 @@ def fingerprint_allele(itr):
             )
         yield row
 
-def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=50):
+def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=50, assembly=None, as_scheme=None):
     if slop > 0:
         region.start = max(0, region.start - slop)
         region.stop = region.stop + slop
-    itr = iter_sites(vcf=vcf, region=region)
+    itr = iter_sites(vcf=vcf, region=region, assembly=assembly, as_scheme=as_scheme)
     itr = flank_site(itr=itr, flanker=flanker)
     itr = filter_by_site(itr=itr)
     if overlaps is not None:
@@ -40,27 +40,10 @@ def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=50)
     itr = filter_by_allele(itr=itr)
     return fingerprint_allele(itr=itr)
 
-def fingerprint_and_index_vcf(vcf=None, region=None, flanker=None):
-    itr = fingerprint_vcf(vcf=vcf, region=region, flanker=flanker)
+def fingerprint_and_index_vcf(vcf=None, region=None, flanker=None, assembly=None, as_scheme=None):
+    itr = fingerprint_vcf(vcf=vcf, region=region, flanker=flanker, assembly=assembly, as_scheme=as_scheme)
     fingerprints = build_allele_index(itr)
     return AlleleIndex(region=region, fingerprints=fingerprints)
-
-class IndexTask:
-    def __init__(self, vcf=None, flanker=None):
-        self.vcf = vcf
-        self.flanker = flanker
-
-    def __call__(self, region=None):
-        return fingerprint_and_index_vcf(vcf=self.vcf, region=region, flanker=self.flanker)
-
-    def fingerprint(self, region=None, chunk_size=50_000):
-        if not isinstance(region, Region):
-            region = Region(region)
-        regions = region.split(chunk_size)
-        #for region in regions:
-            #yield self(region)
-        pool = mp.Pool()
-        yield from pool.imap(self, regions)
 
 class AlleleIndex(object):
     def __init__(self, region=None, fingerprints=None):
@@ -89,23 +72,24 @@ class AlleleIndex(object):
         return False
 
 class ComparisonTask:
-    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50, progress_bar=True):
+    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50, assembly=None, as_scheme=None, progress_bar=True):
         self.query_vcf = query_vcf
         self.target_vcf = target_vcf
         self.flanker = flanker
         self.overlaps = overlaps
         self.annotate = annotate
         self.slop = slop
+        self.assembly = assembly
+        self.as_scheme = as_scheme
         self.progress_bar = progress_bar
     
     def __call__(self, region=None):
-        target_prints = fingerprint_and_index_vcf(vcf=self.target_vcf, region=region, flanker=self.flanker)
-        query_prints = fingerprint_vcf(vcf=self.query_vcf, region=region, flanker=self.flanker, overlaps=self.overlaps, slop=self.slop)
+        target_prints = fingerprint_and_index_vcf(vcf=self.target_vcf, region=region, flanker=self.flanker, assembly=self.assembly, as_scheme=self.as_scheme)
+        query_prints = fingerprint_vcf(vcf=self.query_vcf, region=region, flanker=self.flanker, overlaps=self.overlaps, slop=self.slop, assembly=self.assembly, as_scheme=self.as_scheme)
         if self.annotate is not None:
             query_prints = custom_itr(query_prints, self.annotate)
         for row in query_prints:
             if not row.filter:
-                alfp = row.cache.allele_fingerprint
                 row.label.fingerprint_match = \
                     int(target_prints.match(row.cache.allele_fingerprint))
             # not pickle-able
@@ -131,4 +115,18 @@ class ComparisonTask:
                 if pbar:
                     pbar(pos=cur_region.stop)
                 all_rows.extend(rows)
+
+        return all_rows
+
+    def compare_regions_simple(self, region=None, chunk_size=10_000, **kw):
+        if not isinstance(region, Region):
+            region = Region(region)
+        if self.progress_bar:
+            pbar = region_progress_bar(region=region)
+        else:
+            pbar = None
+        regions = region.split(chunk_size)
+        all_rows = []
+        for reg in regions:
+            all_rows.extend(self.batch_call(reg))
         return all_rows
