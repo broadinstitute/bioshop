@@ -12,30 +12,39 @@ from .. rep.region import Region
 from .. rep.fingerprint import AlleleFingerprint
 from .. utils import region_progress_bar
 
+def get_columns_by_prefix(df=None, prefix=None):
+    return [col for col in df.columns if col.startswith(prefix)]
+
+def get_feature_columns(df=None, prefix='feature_'):
+    return get_columns_by_prefix(df=df, prefix=prefix)
+
+def get_label_columns(df=None, prefix='label_'):
+    return get_columns_by_prefix(df=df, prefix=prefix)
+
 class Classifier:
-    def __init__(self, classifier=None, label=None, features=None, is_trained=False):
+    def __init__(self, classifier=None, label_cols=None, feature_cols=None, is_trained=False):
         self.classifier = classifier
-        self._label = label
-        self._features = features
+        self._label_cols = label_cols
+        self._feature_cols = feature_cols
         self.is_trained = is_trained
 
-    def get_label(self):
-        return self._label
-    def set_label(self, val):
-        if self._label is not None:
+    def get_label_cols(self):
+        return self._label_cols
+    def set_label_cols(self, val):
+        if self._label_cols is not None:
             msg = 'label column is already configured'
             raise ValueError(msg)
-        self._label = val
-    label = property(get_label, set_label)
+        self._label_cols = val
+    label_cols = property(get_label_cols, set_label_cols)
 
-    def get_features(self):
-        return self._features
-    def set_features(self, val):
-        if self._features is not None:
+    def get_feature_cols(self):
+        return self._feature_cols
+    def set_feature_cols(self, val):
+        if self._feature_cols is not None:
             msg = 'features column is already configured'
             raise ValueError(msg)
-        self._features = val
-    features = property(get_features, set_features)
+        self._feature_cols = val
+    feature_cols = property(get_feature_cols, set_feature_cols)
 
     @property
     def classifier_class(self):
@@ -45,23 +54,23 @@ class Classifier:
     def classifier_name(self):
         return self.classifier_class.__name__
 
-    def fit(self, df=None, label=None, features=None):
+    def infer_columns(self, df=None, label_cols=None, feature_cols=None):
+        self.label_cols = label_cols or self.label_cols or get_label_columns(df=df)
+        self.feature_cols = feature_cols or self.feature_cols or get_feature_columns(df=df)
+        return (self.label_cols, self.feature_cols)
+
+    def fit(self, df=None, label_cols=None, feature_cols=None):
         if self.is_trained:
             msg = 'classifier is already trained'
             raise ValueError(msg)
-        label = label or self.label or 'label'
-        assert label is not None
-        features = features or self.features
-        if features is None:
-            features = sorted(set(df.columns) - set([label]))
-        self.label = label
-        self.features = features
-        rpt = f'Fitting {self.classifier_name} to {len(df)} samples with {len(self.features)} features:\n'
-        rpt += str.join('\n', ['  ' + ln for ln in wrap(str.join(' ', self.features))]) + '\n'
+
+        self.infer_columns(df=df, label_cols=label_cols, feature_cols=feature_cols)
+        rpt = f'Fitting {self.classifier_name} to {len(df)} samples with {len(self.feature_cols)} features:\n'
+        rpt += str.join('\n', ['  ' + ln for ln in wrap(str.join(' ', self.feature_cols))]) + '\n'
         print(rpt)
         #
-        inp = df[self.features].to_numpy()
-        gt = df[self.label].to_numpy()
+        inp = df[self.feature_cols].to_numpy()
+        gt = np.squeeze(df[self.label_cols].to_numpy())
         self.classifier.fit(inp, gt)
         self.is_trained = True
 
@@ -69,8 +78,8 @@ class Classifier:
         if not self.is_trained:
             msg = 'classifier is not trained'
             raise ValueError(msg)
-        inp = df[self.features].to_numpy()
-        gt = df[self.label].to_numpy()
+        inp = df[self.feature_cols].to_numpy()
+        gt = df[self.label_cols].to_numpy()
         return self.classifier.score(inp, gt)
 
     def fit_and_score(self, df=None, test_df=None, test_frac=None, **kw):
@@ -135,15 +144,6 @@ def prepare_dataframe(df=None):
     df = df.fillna(0)
     return df
 
-def get_columns_by_prefix(df=None, prefix=None):
-    return [col for col in df.columns if col.startswith(prefix)]
-
-def get_feature_columns(df=None, prefix='feature_'):
-    return get_columns_by_prefix(df=df, prefix=prefix)
-
-def get_label_columns(df=None, prefix='label_'):
-    return get_columns_by_prefix(df=df, prefix=prefix)
-
 def balance_dataframe(df=None, label_cols=None, random_seed=None):
     if label_cols == None:
         label_cols = get_label_columns(df)
@@ -156,9 +156,10 @@ def balance_dataframe(df=None, label_cols=None, random_seed=None):
     min_class = np.argmin(class_counts)
     n_examples = np.min(class_counts)
     balanced_ds = []
-    for class_idx in range(n_classes):
-        subset = df[df['label'] == class_idx].sample(n=n_examples, random_state=random_seed)
-        balanced_ds.append(subset)
+    for label_col in label_cols:
+        for value in df[label_col].unique():
+            subset = df[df[label_col] == value].sample(n=n_examples, random_state=random_seed)
+            balanced_ds.append(subset)
     df = pd.concat(balanced_ds)
     df = df.sample(frac=1, random_state=random_seed)
     return df
