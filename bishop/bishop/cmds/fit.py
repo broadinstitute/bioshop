@@ -12,7 +12,8 @@ import numpy as np
 import pandas as pd
 import sys
 
-from .. ann.classify import Classifier
+from .. ann.classify import Classifier, prepare_dataframe, balance_dataframe
+from .. utils import concat_saved_dataframes
 
 Classifiers = {
     'rf': RandomForestClassifier,
@@ -60,41 +61,6 @@ parser.add_argument(
     help='Random seed to use (randomly assigned if left unset)'
 )
 
-def prepare_dataframe(df_list=None, random_seed=None):
-    frames = (pd.read_pickle(fn) for fn in df_list)
-    df = pd.concat(list(frames))
-
-    df['label'] = df['fingerprint_match'].astype(int)
-    for colname in df.columns:
-        if colname.startswith('overlaps_with_'):
-            df[colname] = df[colname].astype(int)
-
-    df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.fillna(0)
-
-    df = df.sample(frac=1, random_state=random_seed)
-    n_classes = df['label'].nunique()
-    class_counts = df['label'].value_counts().to_list()
-    min_class = np.argmin(class_counts)
-    n_examples = np.min(class_counts)
-    #print(len(df), n_classes, class_counts, min_class, n_examples)
-
-    balanced_ds = []
-    for class_idx in range(n_classes):
-        subset = df[df['label'] == class_idx].sample(n=n_examples, random_state=random_seed)
-        balanced_ds.append(subset)
-
-    df = pd.concat(balanced_ds)
-    df = df.sample(frac=1, random_state=random_seed)
-    df = df.drop('site_idx', axis=1)
-    df['allele_len'] = df.allele.str.len()
-    df = df.drop('allele', axis=1)
-    df = df.drop('allele_idx', axis=1)
-    df = df.drop('chrom', axis=1)
-    df = df.drop('fingerprint_match', axis=1)
-    df = df.replace(dict(variant_type=dict(SNP=0, INDEL=1)))
-    return df
-
 def fit_classifier(clf_class=None, df=None, test_frac=None, random_seed=None):
     clf_name = clf_class.__name__
     kw = {'random_state': random_seed}
@@ -103,15 +69,12 @@ def fit_classifier(clf_class=None, df=None, test_frac=None, random_seed=None):
     clf = clf_class(**kw)
     clf = Classifier(classifier=clf)
     acc = clf.fit_and_score(df=df, test_frac=test_frac)
-    rpt = f"{clf_name} accuracy with test labels {acc * 100:.02f}%"
-    print(rpt)
     return clf
 
 def main(args):
-    df = prepare_dataframe(
-        df_list=args.input_list,
-        random_seed=args.random_seed
-    )
+    df = concat_saved_dataframes(args.input_list)
+    df = prepare_dataframe(df=df)
+    df = balance_dataframe(df=df, random_seed=args.random_seed)
     clf_class = Classifiers[args.classifier]
     clf = fit_classifier(
         clf_class=clf_class, 

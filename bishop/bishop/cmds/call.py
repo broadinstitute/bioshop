@@ -10,16 +10,12 @@ from .. ann.flank import VariantFlanks
 from .. ann.iters import *
 from .. ann.fingerprint import ComparisonTask
 from .. io.intervals import load_interval_lists
+from .. ann.classify import Classifier, prepare_dataframe, AnnotateCozy
 
 from pysam import VariantFile
 
 import sys
 import argparse
-
-DefaultFields = [
-    'AS_BaseQRankSum', 'AS_FS', 'AS_InbreedingCoeff', 'AS_MQ', 
-    'AS_MQRankSum', 'AS_QD', 'AS_ReadPosRankSum', 'AS_SOR'
-]
 
 parser = argparse.ArgumentParser(description='Train allele specific classification')
 parser.add_argument(
@@ -29,10 +25,10 @@ parser.add_argument(
     help='Path to VCF to call'
 )
 parser.add_argument(
-    '--target_vcf',
-    dest='target_vcf_path',
-    required=True, 
-    help='Path to VCF with valid calls from population'
+    '--classifier',
+    dest='classifier_path',
+    default='classifier.pickle',
+    help='Path to pickled classifier'
 )
 parser.add_argument(
     '--assembly',
@@ -42,9 +38,9 @@ parser.add_argument(
 )
 parser.add_argument(
     '--output',
-    dest='output_path',
-    default='dataframe.pickle',
-    help='Path for generated Pandas dataframe'
+    dest='output_vcf_path',
+    default='called.vcf',
+    help='Path to generated VCF',
 )
 # XXX: add support for interval lists
 # XXX: do entire genome if not provided
@@ -65,38 +61,20 @@ parser.add_argument(
     help='Interval file for labeling lookup'
 )
 
-class AnnotateCozy:
-    def __init__(self, field_names=None):
-        self.field_names = field_names
-
-    def __call__(self, row):
-        if 'skip' not in row:
-            site = row['site']
-            al_idx = row['allele_idx']
-            allele = row['allele']
-            if len(site.ref) == len(allele):
-                row['variant_type'] = 'SNP'
-            else:
-                row['variant_type'] = 'INDEL'
-            row['variant_delta_len'] = abs(len(site.ref) - len(allele))
-            info = {fn: site.info[fn][al_idx] for fn in self.field_names}
-            row.update(info)
-        return row
 
 def call(
     query_vcf_path=None, 
+    output_vcf_path=None, 
+    classifier_path=None,
     assembly_name=None,
     strat_intervals=None,
     region=None,
 ):
     ga = GenomeAssemblyMetadata.load(assembly_name)
     overlaps = load_interval_lists(strat_intervals, astype='dataframe')
-    target_vcf = VCF(target_vcf_path, metadata=ga, ignore_missing=True)
     query_vcf = VCF(query_vcf_path, metadata=ga, ignore_missing=True)
-    flanker = VariantFlanks(assembly=ga, as_scheme='ucsc')
-    # XXX: hard wired
-    field_names = tuple(DefaultFields)
-    annotate_func = AnnotateCozy(field_names=field_names)
+    annotate_func = AnnotateCozy()
+    """
     cmp = ComparisonTask(
         query_vcf=query_vcf,
         target_vcf=target_vcf,
@@ -107,16 +85,17 @@ def call(
     itr = cmp.compare_region(region=region)
     df = to_dataframe(itr)
     return df
+    """
 
 def main(args):
-    df = etl(
+    call(
         query_vcf_path=args.query_vcf_path,
-        target_vcf_path=args.target_vcf_path,
+        output_vcf_path=args.output_vcf_path,
+        classifier_path=args.classifier_path,
         assembly_name=args.assembly_name,
         strat_intervals=args.strat_intervals,
         region=args.region,
     )
-    df.to_pickle(args.output_path)
 
 def validate_args(args):
     pass

@@ -5,6 +5,12 @@ class VariantFlanks(object):
         self.flank_len = flank_len
         self._cache = {}
 
+    # at some point, this can move to a chr / pos lookup, 
+    # but by using the site object from the VCF, we can do to things:
+    #
+    #  1) assume (site.pos - 1) is the correct thing to do
+    #  2) assert (flank_up + ref + flank_down) == genome[x:y]
+    #
     def get_flanks(self, site=None):
         chrom = site.chrom
         if self.as_scheme:
@@ -19,4 +25,5 @@ class VariantFlanks(object):
         down = seq[var_end:var_end + self.flank_len]
 
         assert seq[var_start - self.flank_len:var_end + self.flank_len] == (up + site.ref + down)
-        return {'chrom': chrom, 'flank_up': up, 'flank_down': down}
+        #return {'chrom': chrom, 'flank_up': up, 'flank_down': down}
+        return (up, down)

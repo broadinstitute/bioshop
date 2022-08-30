@@ -86,6 +86,10 @@ class Region(object):
         return f"{self.__class__.__name__}('{str(self)}')"
     
     def __str__(self):
+        if self.interval.empty:
+            return f'{self.chrom}'
+        if self.interval.upper == self.interval.lower:
+            return f'{self.chrom}:{self.interval.uppper}'
         return f'{self.chrom}:{self.interval.lower}-{self.interval.upper}'
 
     def split(self, step=None):

@@ -9,17 +9,13 @@ from .. rep.region import Region
 from .. ann.flank import VariantFlanks
 from .. ann.iters import *
 from .. ann.fingerprint import ComparisonTask
+from .. ann.classify import AnnotateCozy
 from .. io.intervals import load_interval_lists
 
 from pysam import VariantFile
 
 import sys
 import argparse
-
-DefaultFields = [
-    'AS_BaseQRankSum', 'AS_FS', 'AS_InbreedingCoeff', 'AS_MQ', 
-    'AS_MQRankSum', 'AS_QD', 'AS_ReadPosRankSum', 'AS_SOR'
-]
 
 parser = argparse.ArgumentParser(description='Train allele specific classification')
 parser.add_argument(
@@ -65,24 +61,6 @@ parser.add_argument(
     help='Interval file for labeling lookup'
 )
 
-class AnnotateCozy:
-    def __init__(self, field_names=None):
-        self.field_names = field_names
-
-    def __call__(self, row):
-        if 'skip' not in row:
-            site = row['site']
-            al_idx = row['allele_idx']
-            allele = row['allele']
-            if len(site.ref) == len(allele):
-                row['variant_type'] = 'SNP'
-            else:
-                row['variant_type'] = 'INDEL'
-            row['variant_delta_len'] = abs(len(site.ref) - len(allele))
-            info = {fn: site.info[fn][al_idx] for fn in self.field_names}
-            row.update(info)
-        return row
-
 def etl(
     query_vcf_path=None, 
     target_vcf_path=None,
@@ -95,9 +73,7 @@ def etl(
     target_vcf = VCF(target_vcf_path, metadata=ga, ignore_missing=True)
     query_vcf = VCF(query_vcf_path, metadata=ga, ignore_missing=True)
     flanker = VariantFlanks(assembly=ga, as_scheme='ucsc')
-    # XXX: hard wired
-    field_names = tuple(DefaultFields)
-    annotate_func = AnnotateCozy(field_names=field_names)
+    annotate_func = AnnotateCozy()
     cmp = ComparisonTask(
         query_vcf=query_vcf,
         target_vcf=target_vcf,

@@ -3,6 +3,8 @@ import pickle
 import multiprocessing as mp
 from textwrap import wrap
 
+import numpy as np
+import pandas as pd
 from sklearn.model_selection import train_test_split
 
 from . iters import *
@@ -105,19 +107,77 @@ class Classifier:
         with open(path, 'rb') as fh:
             return pickle.load(fh)
 
-def classify_vcf(vcf=None, region=None, overlaps=None):
-    itr = iter_sites(vcf=vcf, with_index=True, region=region)
+# XXX: task specific
+class AnnotateCozy:
+    VariantTypes = {'SNP': 0, 'INDEL': 1}
+    DefaultFields = [
+        'AS_BaseQRankSum', 'AS_FS', 'AS_InbreedingCoeff', 'AS_MQ',
+        'AS_MQRankSum', 'AS_QD', 'AS_ReadPosRankSum', 'AS_SOR'
+    ]
+
+    def __init__(self, field_names=None):
+        self.field_names = tuple(field_names or self.DefaultFields)
+
+    def __call__(self, row):
+        if not row.filter:
+            is_snp = int(len(row.meta.ref) == len(row.meta.allele))
+            row.features.substitution = is_snp
+            row.features.delta_length = abs(len(row.meta.ref) - len(row.meta.allele))
+            site = row.cache.site
+            for fn in self.field_names:
+                if fn.startswith('AS_'):
+                    row.features[fn] = site.info[fn][row.meta.allele_idx]
+                else:
+                    row.features[fn] = site.info[fn]
+        return row
+
+# XXX: task specific, and cleanup
+def prepare_dataframe(df=None, label='label'):
+    df[label] = df['fingerprint_match'].astype(int)
+    for colname in df.columns:
+        if colname.startswith('overlaps_with_'):
+            df[colname] = df[colname].astype(int)
+
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.fillna(0)
+
+    df = df.drop('site_idx', axis=1)
+    df['allele_len'] = df.allele.str.len()
+    df = df.drop('allele', axis=1)
+    df = df.drop('allele_idx', axis=1)
+    df = df.drop('chrom', axis=1)
+    df = df.drop('fingerprint_match', axis=1)
+    df = df.replace(dict(variant_type=dict(SNP=0, INDEL=1)))
+    return df
+
+def balance_dataframe(df=None, label='label', random_seed=None):
+    n_classes = df[label].nunique()
+    class_counts = df[label].value_counts().to_list()
+    min_class = np.argmin(class_counts)
+    n_examples = np.min(class_counts)
+    balanced_ds = []
+    for class_idx in range(n_classes):
+        subset = df[df['label'] == class_idx].sample(n=n_examples, random_state=random_seed)
+        balanced_ds.append(subset)
+    df = pd.concat(balanced_ds)
+    df = df.sample(frac=1, random_state=random_seed)
+    return df
+
+def classify_vcf(vcf=None, region=None, overlaps=None, batch_size=10_000):
+    itr = iter_sites(vcf=vcf, region=region)
     if overlaps is not None:
         itr = overlaps_with_site(itr, overlaps=overlaps)
     itr = skip_site(itr=itr)
-    itr = iter_alleles(itr=itr, with_index=True)
+    itr = iter_alleles(itr=itr)
     itr = skip_allele(itr=itr)
-    return fingerprint_allele(itr=itr)
+    batches = batcher(itr=itr, batch_size=batch_size)
 
 class ClassifyTask:
-    def __init__(self, vcf=None, classifier=None):
+    def __init__(self, vcf=None, classifier=None, overlaps=None, annotate=None):
         self.vcf = vcf
         self.classifier = classifier
+        self.overlaps = overlaps
+        self.annotate = annotate
 
     def __call__(self, region=None):
         return classify_vcf(vcf=self.vcf, region=region, classifier=self.classifier)

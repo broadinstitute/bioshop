@@ -3,6 +3,7 @@ import zlib
 import requests
 import tempfile
 
+import pandas as pd
 from tqdm import tqdm
 from cachier import cachier
 
@@ -18,7 +19,12 @@ __all__ = [
     'region_progress_bar',
     'cache_func',
     'softhash',
+    'concat_saved_dataframes',
 ]
+
+def concat_saved_dataframes(df_list=None):
+    frames = [pd.read_pickle(fn) for fn in df_list]
+    return pd.concat(frames)
 
 def region_progress_bar(region=None):
     if not isinstance(region, Region):

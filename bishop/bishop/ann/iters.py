@@ -1,5 +1,7 @@
 import pandas as pd
 
+from . precis import Precis
+
 from .. rep.region import Region
 from .. rep.fingerprint import AlleleFingerprint
 from .. utils import is_concrete_nucleotides
@@ -16,52 +18,54 @@ def batcher(itr=None, batch_size=None, include_skips=False):
     if len(batch):
         yield batch
 
-def iter_sites(vcf=None, with_index=False, region=None):
+def iter_sites(vcf=None, region=None):
     if isinstance(region, Region):
         region = str(region)
     sites = vcf.fetch(region=region)
     for (site_idx, site) in enumerate(sites):
-        row = dict(site=site)
-        if with_index:
-            row.update(dict(site_idx=site_idx))
+        row = Precis()
+        row.cache.site = site
+        row.meta.site_idx = site_idx
+        row.meta.pos = site.pos
+        row.meta.ref = site.ref
+        # XXX: as scheme?
+        row.meta.chrom = site.chrom
         yield row
 
 def flank_site(itr=None, flanker=None):
     for row in itr:
-        site = row['site']
-        flanks = flanker.get_flanks(site=site)
-        row['chrom'] = flanks.pop('chrom')
-        row['flanks'] = flanks
+        flanks = flanker.get_flanks(site=row.cache.site)
+        #row.meta.chrom = flanks.pop('chrom')
+        row.cache.flanks = flanks
         yield row
 
 def overlaps_with_site(itr=None, overlaps=None, slop=5):
     for row in itr:
-        site = row['site']
-        start = site.pos - slop
-        stop = site.pos + len(site.ref) + slop
-        region = Region(row['chrom'], start, stop)
-        ovset = set(overlaps.overlaps_with(region))
-        row['overlaps_with'] = {nm: nm in ovset for nm in overlaps.names}
+        # XXX: index match? does slop take care of this?
+        start = row.meta.pos - slop
+        stop = row.meta.pos + len(row.meta.ref) + slop
+        region = Region(row.meta.chrom, start, stop)
+        ovmap = set(overlaps.overlaps_with(region))
+        ovmap = {f'overlap_{nm}': nm in ovmap for nm in overlaps.names}
+        row.features.update(ovmap)
         yield row
 
-def skip_site(itr=None, skip_filtered=True, skip_ambiguous_bases=True):
+def filter_by_site(itr=None, skip_filtered=True, skip_ambiguous_bases=True):
     for row in itr:
-        site = row['site']
+        site = row.cache.site
         if skip_filtered:
             filters = set(site.filter)
             if filters and ('PASS' not in filters):
-                row['skip_site'] = True
-                row['skip'] = True
-        if skip_ambiguous_bases and 'flanks' in row:
-            (up, down) = (row['flanks']['flank_up'], row['flanks']['flank_down'])
-            if not is_concrete_nucleotides(up + down):
-                row['skip_flanks'] = True
-                row['skip'] = True
+                row.filter.set_filter('site filtered by VCF')
+        if skip_ambiguous_bases and 'flanks' in row.cache:
+            flanks = row.cache.flanks[0] + row.cache.flanks[1]
+            if not is_concrete_nucleotides(flanks):
+                row.filter.set_filter('ambiguous base in genomic flanks')
         yield row
 
-def iter_alleles(itr=None, with_index=False, with_ref_allele=False):
+def iter_alleles(itr=None, with_ref_allele=False):
     for row in itr:
-        site = row['site']
+        site = row.cache.site
         if site.alts is None:
             alleles = list()
         else:
@@ -71,25 +75,22 @@ def iter_alleles(itr=None, with_index=False, with_ref_allele=False):
         if alleles:
             for (allele_idx, allele) in enumerate(alleles):
                 allele_row = row.copy()
-                allele_row.update(dict(allele=allele))
-                if with_index:
-                    allele_row.update(dict(allele_idx=allele_idx))
+                allele_row.meta.allele = allele
+                allele_row.meta.allele_idx = allele_idx
                 yield allele_row
         else:
             yield row
 
-def skip_allele(itr=None, skip_ambiguous_bases=True):
+def filter_by_allele(itr=None, skip_ambiguous_bases=True):
     concrete_bases = set('AGTC')
     for row in itr:
-        if 'allele' not in row:
-            row['skip_allele'] = True
-            row['skip'] = True
-        elif 'skip' not in row:
-            allele = row['allele']
+        if not row.filter:
+            if 'allele' not in row:
+                row.filter.set_filter('missing alleles')
+                continue
             if skip_ambiguous_bases and \
-                set(str(allele).upper()) - concrete_bases:
-                    row['skip_allele'] = True
-                    row['skip'] = True
+                set(str(row.allele).upper()) - concrete_bases:
+                    row.filter.set_filter('allele contains ambiguous base')
         yield row
 
 def custom_itr(itr=None, custom_func=None):
@@ -97,21 +98,11 @@ def custom_itr(itr=None, custom_func=None):
         row = custom_func(row)
         yield row
 
-def to_dataframe(itr):
+def to_dataframe(itr, include_domains=('meta', 'features')):
     rows = []
     for row in itr:
-        if 'site' in row:
-            del row['site']
-        if 'flanks' in row:
-            del row['flanks']
-        if 'skip' in row:
+        if row.filter:
             continue
-        if 'overlaps_with' in row:
-            for name in row['overlaps_with']:
-                new_name = f'overlaps_with_{name}'
-                row[new_name] = row['overlaps_with'][name]
-            del row['overlaps_with']
-        if 'allele_fingerprint' in row:
-            del row['allele_fingerprint']
+        row = row.flatten(include_domains=include_domains)
         rows.append(row)
     return pd.DataFrame(rows)

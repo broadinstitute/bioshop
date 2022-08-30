@@ -9,22 +9,21 @@ from .. utils import region_progress_bar
 def build_allele_index(itr):
     fingerprints = {}
     for row in itr:
-        if 'skip' in row:
+        if row.filter:
             continue
-        allele_fp = row['allele_fingerprint']
+        allele_fp = row.cache.allele_fingerprint
         fingerprints[allele_fp.literal_fingerprint] = allele_fp
         fingerprints[allele_fp.cigar_fingerprint] = allele_fp
     return fingerprints
 
 def fingerprint_allele(itr):
     for row in itr:
-        if 'skip' not in row:
-            site = row['site']
-            flanks = tuple(row['flanks'].values())
-            chrom = row.get('chrom')
-            alt = row['allele']
-            row['allele_fingerprint'] = AlleleFingerprint.from_site(
-                site=site, alt=alt, flanks=flanks, chrom=chrom
+        if not row.filter:
+            row.cache.allele_fingerprint = AlleleFingerprint.from_site(
+                site=row.cache.site, 
+                alt=row.meta.allele, 
+                flanks=row.cache.flanks, 
+                chrom=row.meta.chrom
             )
         yield row
 
@@ -32,13 +31,13 @@ def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=50)
     if slop > 0:
         region.start = max(0, region.start - slop)
         region.stop = region.stop + slop
-    itr = iter_sites(vcf=vcf, with_index=True, region=region)
+    itr = iter_sites(vcf=vcf, region=region)
     itr = flank_site(itr=itr, flanker=flanker)
     if overlaps is not None:
         itr = overlaps_with_site(itr, overlaps=overlaps)
-    itr = skip_site(itr=itr)
-    itr = iter_alleles(itr=itr, with_index=True)
-    itr = skip_allele(itr=itr)
+    itr = filter_by_site(itr=itr)
+    itr = iter_alleles(itr=itr) 
+    itr = filter_by_allele(itr=itr)
     return fingerprint_allele(itr=itr)
 
 def fingerprint_and_index_vcf(vcf=None, region=None, flanker=None):
@@ -58,6 +57,8 @@ class IndexTask:
         if not isinstance(region, Region):
             region = Region(region)
         regions = region.split(chunk_size)
+        #for region in regions:
+            #yield self(region)
         pool = mp.Pool()
         yield from pool.imap(self, regions)
 
@@ -87,44 +88,6 @@ class AlleleIndex(object):
         # no match
         return False
 
-class OldComparisonTask:
-    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None):
-        self.query_vcf = query_vcf
-        self.target_vcf = target_vcf
-        self.flanker = flanker
-        self.overlaps = overlaps
-        self.index_task = IndexTask(self.target_vcf, flanker=self.flanker)
-
-    def __call__(self, region=None, slop=50):
-        cache = []
-        target_prints = self.index_task.fingerprint(region=region)
-        query_prints = fingerprint_vcf(vcf=self.query_vcf, region=region, flanker=self.flanker, overlaps=self.overlaps)
-        last_pos = 0
-        for row in query_prints:
-            if 'skip' in row:
-                continue
-            site = row['site']
-            while site.pos > (last_pos - slop):
-                if target_prints is None:
-                    break
-                try:
-                    ts = time.time()
-                    prints = next(target_prints)
-                    print(f'waited {time.time() - ts}')
-                except StopIteration:
-                    target_prints = None
-                    break
-                last_pos = prints.region.interval.upper
-                print(last_pos)
-                cache = cache[-2:] + [prints]
-            alfp = row['allele_fingerprint']
-            row['fingerprint_match'] = False
-            for index in cache:
-                if index.match(alfp):
-                    row['fingerprint_match'] = True
-                    break
-            yield row
-
 class ComparisonTask:
     def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50, progress_bar=True):
         self.query_vcf = query_vcf
@@ -141,12 +104,12 @@ class ComparisonTask:
         if self.annotate is not None:
             query_prints = custom_itr(query_prints, self.annotate)
         for row in query_prints:
-            if 'skip' not in row:
-                alfp = row['allele_fingerprint']
-                row['fingerprint_match'] = \
-                    target_prints.match(row['allele_fingerprint'])
+            if not row.filter:
+                alfp = row.cache.allele_fingerprint
+                row.label.fingerprint_match = \
+                    target_prints.match(row.cache.allele_fingerprint)
             # not pickle-able
-            del row['site']
+            del row.cache
             yield row
 
     def batch_call(self, region=None, **kw):
