@@ -41,13 +41,14 @@ def flank_site(itr=None, flanker=None):
 
 def overlaps_with_site(itr=None, overlaps=None, slop=5):
     for row in itr:
-        # XXX: index match? does slop take care of this?
-        start = row.meta.pos - slop
-        stop = row.meta.pos + len(row.meta.ref) + slop
-        region = Region(row.meta.chrom, start, stop)
-        ovmap = set(overlaps.overlaps_with(region))
-        ovmap = {f'overlap_{nm}': nm in ovmap for nm in overlaps.names}
-        row.features.update(ovmap)
+        if not row.filter:
+            # XXX: index match? does slop take care of this?
+            start = row.meta.pos - slop
+            stop = row.meta.pos + len(row.meta.ref) + slop
+            region = Region(row.meta.chrom, start, stop)
+            hits = set(overlaps.overlaps_with(region))
+            ovmap = {f'overlap_{nm}': int(nm in hits) for nm in overlaps.names}
+            row.feature.update(ovmap)
         yield row
 
 def filter_by_site(itr=None, skip_filtered=True, skip_ambiguous_bases=True):
@@ -85,12 +86,12 @@ def filter_by_allele(itr=None, skip_ambiguous_bases=True):
     concrete_bases = set('AGTC')
     for row in itr:
         if not row.filter:
-            if 'allele' not in row:
-                row.filter.set_filter('missing alleles')
+            if 'allele' not in row.meta:
+                row.filter.set_filter('missing allele')
                 continue
             if skip_ambiguous_bases and \
-                set(str(row.allele).upper()) - concrete_bases:
-                    row.filter.set_filter('allele contains ambiguous base')
+                set(str(row.meta.allele).upper()) - concrete_bases:
+                    row.filter.set_filter('allele is symbolic')
         yield row
 
 def custom_itr(itr=None, custom_func=None):
@@ -98,7 +99,7 @@ def custom_itr(itr=None, custom_func=None):
         row = custom_func(row)
         yield row
 
-def to_dataframe(itr, include_domains=('meta', 'features')):
+def to_dataframe(itr, include_domains=('meta', 'feature', 'label')):
     rows = []
     for row in itr:
         if row.filter:

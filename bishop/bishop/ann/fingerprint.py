@@ -33,9 +33,9 @@ def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=50)
         region.stop = region.stop + slop
     itr = iter_sites(vcf=vcf, region=region)
     itr = flank_site(itr=itr, flanker=flanker)
+    itr = filter_by_site(itr=itr)
     if overlaps is not None:
         itr = overlaps_with_site(itr, overlaps=overlaps)
-    itr = filter_by_site(itr=itr)
     itr = iter_alleles(itr=itr) 
     itr = filter_by_allele(itr=itr)
     return fingerprint_allele(itr=itr)
@@ -107,7 +107,7 @@ class ComparisonTask:
             if not row.filter:
                 alfp = row.cache.allele_fingerprint
                 row.label.fingerprint_match = \
-                    target_prints.match(row.cache.allele_fingerprint)
+                    int(target_prints.match(row.cache.allele_fingerprint))
             # not pickle-able
             del row.cache
             yield row

@@ -120,15 +120,13 @@ class AnnotateCozy:
 
     def __call__(self, row):
         if not row.filter:
-            is_snp = int(len(row.meta.ref) == len(row.meta.allele))
-            row.features.substitution = is_snp
-            row.features.delta_length = abs(len(row.meta.ref) - len(row.meta.allele))
+            row.feature.delta_length = abs(len(row.meta.ref) - len(row.meta.allele))
             site = row.cache.site
             for fn in self.field_names:
                 if fn.startswith('AS_'):
-                    row.features[fn] = site.info[fn][row.meta.allele_idx]
+                    row.feature[fn] = site.info[fn][row.meta.allele_idx]
                 else:
-                    row.features[fn] = site.info[fn]
+                    row.feature[fn] = site.info[fn]
         return row
 
 # XXX: task specific, and cleanup
