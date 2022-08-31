@@ -28,3 +28,7 @@ class VCF(CuratedAssembly, VariantFile):
     @classmethod
     def __expand__(cls, args, kw):
         return cls(*args, **kw)
+
+    # XXX: support append?
+    def to_writer(self, path=None):
+        return self.__class__(path, 'w', header=self.header)

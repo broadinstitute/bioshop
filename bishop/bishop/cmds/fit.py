@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import sys
 
-from .. ann.classify import Classifier, prepare_dataframe, balance_dataframe
+from .. ann.classify import Classifier, numlint, balance_dataframe
 from .. utils import concat_saved_dataframes
 
 Classifiers = {
@@ -73,7 +73,7 @@ def fit_classifier(clf_class=None, df=None, test_frac=None, random_seed=None):
 
 def main(args):
     df = concat_saved_dataframes(args.input_list)
-    df = prepare_dataframe(df=df)
+    df = numlint(df)
     df = balance_dataframe(df=df, random_seed=args.random_seed)
     clf_class = Classifiers[args.classifier]
     clf = fit_classifier(

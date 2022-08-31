@@ -10,7 +10,7 @@ from .. ann.flank import VariantFlanks
 from .. ann.iters import *
 from .. ann.fingerprint import ComparisonTask
 from .. io.intervals import load_interval_lists
-from .. ann.classify import Classifier, prepare_dataframe, AnnotateCozy
+from .. ann.classify import Classifier, AnnotateCozy, ClassifyTask
 
 from pysam import VariantFile
 
@@ -69,23 +69,31 @@ def call(
     assembly_name=None,
     strat_intervals=None,
     region=None,
+    as_scheme='ucsc'
 ):
     ga = GenomeAssemblyMetadata.load(assembly_name)
     overlaps = load_interval_lists(strat_intervals, astype='dataframe')
     query_vcf = VCF(query_vcf_path, metadata=ga, ignore_missing=True)
+    specs = [
+        {'ID': 'BLOD', 'Description': 'Bishop LOD', 'Type': 'Float', 'Number': 1},
+        {'ID': 'AS_BLOD', 'Description': 'Allele Specific Bishop LOD', 'Type': 'Float', 'Number': 'A'},
+    ]
+    for spec in specs:
+        items = list(spec.items())
+        query_vcf.header.add_meta(key='INFO', items=items)
+    output_vcf = query_vcf.to_writer(output_vcf_path)
     annotate_func = AnnotateCozy()
-    """
-    cmp = ComparisonTask(
+    classifier = Classifier.load_classifier(classifier_path)
+    # XXX: support pandas dataframe saving as well?
+    cls = ClassifyTask(
         query_vcf=query_vcf,
-        target_vcf=target_vcf,
-        flanker=flanker,
+        classifier=classifier,
         overlaps=overlaps,
         annotate=annotate_func,
+        assembly=ga,
+        as_scheme=as_scheme,
     )
-    itr = cmp.compare_region(region=region)
-    df = to_dataframe(itr)
-    return df
-    """
+    cls.call_vcf_sites(output_vcf=output_vcf, region=region)
 
 def main(args):
     call(

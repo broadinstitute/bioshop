@@ -23,7 +23,6 @@ def iter_sites(vcf=None, region=None, assembly=None, as_scheme=None):
         region = str(region)
     sites = vcf.fetch(region=region)
     for (site_idx, site) in enumerate(sites):
-        # XXX: dynamic domains?
         row = Precis()
         row.cache.site = site
         row.meta.site_idx = site_idx
@@ -38,7 +37,6 @@ def iter_sites(vcf=None, region=None, assembly=None, as_scheme=None):
 def flank_site(itr=None, flanker=None):
     for row in itr:
         flanks = flanker.get_flanks(site=row.cache.site)
-        #row.meta.chrom = flanks.pop('chrom')
         row.cache.flanks = flanks
         yield row
 
@@ -54,7 +52,7 @@ def overlaps_with_site(itr=None, overlaps=None, slop=5):
             row.feature.update(ovmap)
         yield row
 
-def filter_by_site(itr=None, skip_filtered=True, skip_ambiguous_bases=True):
+def filter_by_site(itr=None, skip_filtered=False, skip_ambiguous_bases=True):
     for row in itr:
         site = row.cache.site
         if skip_filtered:
@@ -91,7 +89,7 @@ def filter_by_allele(itr=None, skip_ambiguous_bases=True):
         if not row.filter:
             if 'allele' not in row.meta:
                 row.filter.set_filter('missing allele')
-                continue
+            #
             if skip_ambiguous_bases and \
                 set(str(row.meta.allele).upper()) - concrete_bases:
                     row.filter.set_filter('allele is symbolic')
@@ -110,3 +108,26 @@ def to_dataframe(itr, include_domains=('meta', 'feature', 'label')):
         row = row.flatten(include_domains=include_domains)
         rows.append(row)
     return pd.DataFrame(rows)
+
+def annotate_alleles_from_dataframe(itr=None, df=None, columns=None):
+    # XXX
+    if columns is None:
+        columns = [('score', 'AS_BLOD')]
+    # site-level
+    for row in itr:
+        site = row.cache.site
+        if not row.filter:
+            hits = df[df.meta_site_idx == row.meta.site_idx]
+            hits = hits.sort_values(['meta_allele_idx'], ascending=True)
+            assert len(hits) == len(site.alts)
+            for col in columns:
+                if len(col) == 1:
+                    (from_col, to_col) = (col, col)
+                elif len(col) == 2:
+                    (from_col, to_col) = col
+                else:
+                    raise ValueError(col)
+                site.info[to_col] = tuple(hits[from_col].to_list())
+                if len(hits) > 1:
+                    print(site.pos, site.ref, site.alts, site.info[to_col])
+        yield row

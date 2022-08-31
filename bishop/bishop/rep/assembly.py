@@ -12,7 +12,8 @@ class CuratedAssembly:
         if scheme is None:
             if contig_names is None:
                 contig_names = self.get_contig_names()
-            scheme = self.metadata.detect_scheme(contig_names, ignore_missing=ignore_missing)
+            if self.metadata is not None:
+                scheme = self.metadata.detect_scheme(contig_names, ignore_missing=ignore_missing)
         self.scheme = scheme
 
     def _reduce_hook(self):

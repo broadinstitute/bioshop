@@ -28,6 +28,12 @@ class Classifier:
         self._feature_cols = feature_cols
         self.is_trained = is_trained
 
+    def __getstate__(self):
+        return (self.classifier, self._label_cols, self._feature_cols, self.is_trained)
+
+    def __setstate__(self, state):
+        (self.classifier, self._label_cols, self._feature_cols, self.is_trained) = state
+
     def get_label_cols(self):
         return self._label_cols
     def set_label_cols(self, val):
@@ -92,20 +98,34 @@ class Classifier:
         print(rpt)
         return acc
 
-    def predict(self, df=None, mode=None):
+    def predict(self, df=None, mode=None, score_col='score', epsilon=1e-5):
         if not self.is_trained:
             msg = 'classifier is not trained'
             raise ValueError(msg)
-        if mode == 'log':
+        if mode == 'log_proba':
             func = self.classifier.predict_log_proba
-        elif mode == 'proba':
+        elif mode in ('proba', 'logodds'):
             func = self.classifier.predict_proba
         elif mode is None:
             func = self.classifier.predict
         else:
             raise ValueError(mode)
-        features = df[self.features].numpy()
-        return func(features)
+        features = df[self.feature_cols]
+        features = numlint(features)
+        with np.errstate(divide='ignore'):
+            res = func(features.to_numpy())
+            if mode == 'logodds':
+                res[res == np.inf] = 1
+                res[res == -np.inf] = 0
+                res[res == 0] = epsilon
+                assert res.shape[-1] == 2
+                res = np.squeeze(np.log(res[:, 1] / res[:, 0]))
+        if len(res.shape) == 2 and res.shape[-1] == 2:
+            if res.shape[-1] != 2:
+                raise NotImplementedError('n_classes != 2')
+            res = np.squeeze(res[:, 0])
+        df[score_col] = res
+        return df
     
     def save_classifier(self, path=None):
         with open(path, 'wb') as fh:
@@ -118,7 +138,6 @@ class Classifier:
 
 # XXX: task specific
 class AnnotateCozy:
-    VariantTypes = {'SNP': 0, 'INDEL': 1}
     DefaultFields = [
         'AS_BaseQRankSum', 'AS_FS', 'AS_InbreedingCoeff', 'AS_MQ',
         'AS_MQRankSum', 'AS_QD', 'AS_ReadPosRankSum', 'AS_SOR'
@@ -138,17 +157,9 @@ class AnnotateCozy:
                     row.feature[fn] = site.info[fn]
         return row
 
-# XXX: task specific, and cleanup
-def prepare_dataframe(df=None):
-    df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.fillna(0)
-    return df
-
 def balance_dataframe(df=None, label_cols=None, random_seed=None):
     if label_cols == None:
         label_cols = get_label_columns(df)
-    if len(label_cols) > 1:
-        raise NotImplementedError
     n_classes = len(label_cols)
     class_counts = []
     for label in label_cols:
@@ -164,31 +175,73 @@ def balance_dataframe(df=None, label_cols=None, random_seed=None):
     df = df.sample(frac=1, random_state=random_seed)
     return df
 
-def classify_vcf(vcf=None, region=None, overlaps=None, batch_size=10_000, assembly=None, as_scheme=None):
+def classify_vcf(vcf=None, region=None, classifier=None, overlaps=None, annotate=None, batch_size=10_000, assembly=None, as_scheme=None):
     itr = iter_sites(vcf=vcf, region=region, assembly=assembly, as_scheme=as_scheme)
+    #itr = filter_by_site(itr=itr)
     if overlaps is not None:
         itr = overlaps_with_site(itr, overlaps=overlaps)
-    itr = skip_site(itr=itr)
     itr = iter_alleles(itr=itr)
-    itr = skip_allele(itr=itr)
-    batches = batcher(itr=itr, batch_size=batch_size)
+    #itr = filter_by_allele(itr=itr)
+    if annotate:
+        itr = custom_itr(itr, annotate)
+    df = to_dataframe(itr)
+    return df
+
+def numlint(thing, posinf=0, neginf=0, nan=0, **extra):
+    rules = {np.inf: posinf, -np.inf: neginf, np.nan: nan}
+    rules.update(extra)
+    if isinstance(thing, pd.DataFrame):
+        return thing.replace(rules)
+    if isinstance(thing, np.ndarray):
+        for (old, new) in rules.items():
+            thing[thing == old] = new
+        return thing
+    raise TypeError(type(thing))
 
 class ClassifyTask:
-    def __init__(self, vcf=None, classifier=None, overlaps=None, annotate=None, assembly=None, as_scheme=None):
-        self.vcf = vcf
+    def __init__(self, query_vcf=None, classifier=None, overlaps=None, annotate=None, assembly=None, as_scheme=None, progress_bar=True):
+        self.query_vcf = query_vcf
         self.classifier = classifier
         self.overlaps = overlaps
         self.annotate = annotate
         self.assembly = assembly
         self.as_scheme = as_scheme
-
+        self.progress_bar = progress_bar
+    
     def __call__(self, region=None):
-        return classify_vcf(vcf=self.vcf, region=region, classifier=self.classifier)
+        df = classify_vcf(
+            vcf=self.query_vcf, 
+            region=region, 
+            classifier=self.classifier,
+            overlaps=self.overlaps, 
+            annotate=self.annotate, 
+            assembly=self.assembly, 
+            as_scheme=self.as_scheme,
+        )
+        return (region, df)
 
-    def classify(self, region=None, chunk_size=50_000):
+    def classify_region(self, region=None, mode='logodds', chunk_size=100_000):
         if not isinstance(region, Region):
             region = Region(region)
+        if self.progress_bar:
+            pbar = region_progress_bar(region=region)
+        else:
+            pbar = None
         regions = region.split(chunk_size)
-        pool = mp.Pool()
-        yield from pool.imap(self, regions)
+        with mp.Pool() as pool:
+            itr = pool.imap(self, regions)
+            for (cur_region, df) in itr:
+                if pbar:
+                    pbar(pos=cur_region.stop)
+                df = self.classifier.predict(df, mode=mode)
+                yield (cur_region, df)
 
+    def call_vcf_sites(self, output_vcf=None, columns=None, region=None, **kw):
+        df_itr = self.classify_region(region=region, **kw)
+        for (cur_region, df) in df_itr: 
+            itr = iter_sites(vcf=self.query_vcf, region=cur_region, assembly=self.assembly, as_scheme=self.as_scheme)
+            itr = annotate_alleles_from_dataframe(itr=itr, df=df, columns=columns)
+            for row in itr:
+                # XXX not here, hardwired
+                row.cache.site.info['BLOD'] = min(row.cache.site.info['AS_BLOD'])
+                output_vcf.write(row.cache.site)
