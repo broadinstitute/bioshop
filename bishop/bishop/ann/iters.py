@@ -6,18 +6,6 @@ from .. rep.region import Region
 from .. rep.fingerprint import AlleleFingerprint
 from .. utils import is_concrete_nucleotides
 
-def batcher(itr=None, batch_size=None, include_skips=False):
-    batch = []
-    for row in itr:
-        if not include_skips and 'skip' in row:
-            continue
-        batch.append(row)
-        if len(batch) >= batch_size:
-            yield batch
-            batch = []
-    if len(batch):
-        yield batch
-
 def iter_sites(vcf=None, region=None, assembly=None, as_scheme=None):
     if isinstance(region, Region):
         region = str(region)
@@ -32,6 +20,20 @@ def iter_sites(vcf=None, region=None, assembly=None, as_scheme=None):
             row.meta.chrom = assembly.as_scheme(site.chrom, as_scheme=as_scheme)
         else:
             row.meta.chrom = site.chrom
+        yield row
+
+def pos_monitor(itr=None, remote=None, name='nucs'):
+    last_pos = None
+    for row in itr:
+        if last_pos is not None:
+            delta = row.meta.pos - last_pos
+            remote.add(name=name, value=delta)
+        last_pos = row.meta.pos
+        yield row
+
+def iter_monitor(itr=None, remote=None, name=None):
+    for row in itr:
+        remote.add(name=name, value=1)
         yield row
 
 def flank_site(itr=None, flanker=None):
@@ -90,7 +92,7 @@ def filter_by_allele(itr=None, skip_ambiguous_bases=True):
             if 'allele' not in row.meta:
                 row.filter.set_filter('missing allele')
             #
-            if skip_ambiguous_bases and \
+            elif skip_ambiguous_bases and \
                 set(str(row.meta.allele).upper()) - concrete_bases:
                     row.filter.set_filter('allele is symbolic')
         yield row
@@ -107,6 +109,8 @@ def to_dataframe(itr, include_domains=('meta', 'feature', 'label')):
             continue
         row = row.flatten(include_domains=include_domains)
         rows.append(row)
+    if not rows:
+        return
     return pd.DataFrame(rows)
 
 def annotate_alleles_from_dataframe(itr=None, df=None, columns=None):
@@ -128,6 +132,4 @@ def annotate_alleles_from_dataframe(itr=None, df=None, columns=None):
                 else:
                     raise ValueError(col)
                 site.info[to_col] = tuple(hits[from_col].to_list())
-                if len(hits) > 1:
-                    print(site.pos, site.ref, site.alts, site.info[to_col])
         yield row

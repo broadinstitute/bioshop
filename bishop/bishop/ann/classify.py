@@ -123,7 +123,7 @@ class Classifier:
         if len(res.shape) == 2 and res.shape[-1] == 2:
             if res.shape[-1] != 2:
                 raise NotImplementedError('n_classes != 2')
-            res = np.squeeze(res[:, 0])
+            res = np.squeeze(res[:, 1])
         df[score_col] = res
         return df
     
@@ -143,18 +143,27 @@ class AnnotateCozy:
         'AS_MQRankSum', 'AS_QD', 'AS_ReadPosRankSum', 'AS_SOR'
     ]
 
-    def __init__(self, field_names=None):
+    def __init__(self, field_names=None, default_value=0):
         self.field_names = tuple(field_names or self.DefaultFields)
+        self.default_value = 0
 
     def __call__(self, row):
         if not row.filter:
-            row.feature.delta_length = abs(len(row.meta.ref) - len(row.meta.allele))
+            #row.feature.delta_length = abs(len(row.meta.ref) - len(row.meta.allele))
+            row.feature.delta_length = len(row.meta.ref) - len(row.meta.allele)
+            row.feature.is_snp = (len(row.meta.ref) == len(row.meta.allele))
             site = row.cache.site
             for fn in self.field_names:
                 if fn.startswith('AS_'):
-                    row.feature[fn] = site.info[fn][row.meta.allele_idx]
+                    try:
+                        row.feature[fn] = site.info[fn][row.meta.allele_idx]
+                    except KeyError:
+                        row.feature[fn] = self.default_value
                 else:
-                    row.feature[fn] = site.info[fn]
+                    try:
+                        row.feature[fn] = site.info[fn]
+                    except KeyError:
+                        row.feature[fn] = self.default_value
         return row
 
 def balance_dataframe(df=None, label_cols=None, random_seed=None):
@@ -220,7 +229,7 @@ class ClassifyTask:
         )
         return (region, df)
 
-    def classify_region(self, region=None, mode='logodds', chunk_size=100_000):
+    def classify_region(self, region=None, mode='proba', chunk_size=1_000_000):
         if not isinstance(region, Region):
             region = Region(region)
         if self.progress_bar:
@@ -233,12 +242,35 @@ class ClassifyTask:
             for (cur_region, df) in itr:
                 if pbar:
                     pbar(pos=cur_region.stop)
-                df = self.classifier.predict(df, mode=mode)
+                if df is None:
+                    continue
+                if len(df) > 0:
+                    df = self.classifier.predict(df, mode=mode)
                 yield (cur_region, df)
 
+    def classify_region_single(self, region=None, mode='proba', chunk_size=1_000_000):
+        if not isinstance(region, Region):
+            region = Region(region)
+        if self.progress_bar:
+            pbar = region_progress_bar(region=region)
+        else:
+            pbar = None
+        regions = region.split(chunk_size)
+        for region in regions:
+            (cur_region, df)  = self(region)
+            if pbar:
+                pbar(pos=cur_region.stop)
+            if df is None:
+                continue
+            if len(df) > 0:
+                df = self.classifier.predict(df, mode=mode)
+            yield (cur_region, df)
+
     def call_vcf_sites(self, output_vcf=None, columns=None, region=None, **kw):
-        df_itr = self.classify_region(region=region, **kw)
+        df_itr = self.classify_region_single(region=region, **kw)
         for (cur_region, df) in df_itr: 
+            if not len(df):
+                continue
             itr = iter_sites(vcf=self.query_vcf, region=cur_region, assembly=self.assembly, as_scheme=self.as_scheme)
             itr = annotate_alleles_from_dataframe(itr=itr, df=df, columns=columns)
             for row in itr:

@@ -11,6 +11,7 @@ from .. ann.iters import *
 from .. ann.fingerprint import ComparisonTask
 from .. ann.classify import AnnotateCozy
 from .. io.intervals import load_interval_lists
+from .. io.monitor import Monitor
 
 from pysam import VariantFile
 
@@ -84,8 +85,10 @@ def etl(
         assembly=ga,
         as_scheme=as_scheme,
     )
-    itr = cmp.compare_region(region=region)
-    df = to_dataframe(itr)
+    mon = Monitor()
+    mon.enable_reporting(2)
+    with mon:
+        df = cmp.compare_region(region=region)
     return df
 
 def main(args):

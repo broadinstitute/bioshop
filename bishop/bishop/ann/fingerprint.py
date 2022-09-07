@@ -1,10 +1,12 @@
+import os
+from shutil import rmtree
+from tempfile import mkdtemp
 import multiprocessing as mp
-import time
 
 from . iters import *
 from .. rep.region import Region
 from .. rep.fingerprint import AlleleFingerprint
-from .. utils import region_progress_bar
+from .. io.monitor import get_remote_monitor
 
 def build_allele_index(itr):
     fingerprints = {}
@@ -27,21 +29,27 @@ def fingerprint_allele(itr):
             )
         yield row
 
-def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=50, assembly=None, as_scheme=None):
+def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=50, assembly=None, as_scheme=None, remote=None):
     if slop > 0:
         region.start = max(0, region.start - slop)
         region.stop = region.stop + slop
     itr = iter_sites(vcf=vcf, region=region, assembly=assembly, as_scheme=as_scheme)
+    if remote:
+        itr = pos_monitor(itr, remote)
+        itr = iter_monitor(itr, remote, 'sites')
     itr = flank_site(itr=itr, flanker=flanker)
     itr = filter_by_site(itr=itr)
     if overlaps is not None:
         itr = overlaps_with_site(itr, overlaps=overlaps)
     itr = iter_alleles(itr=itr) 
     itr = filter_by_allele(itr=itr)
-    return fingerprint_allele(itr=itr)
+    itr = fingerprint_allele(itr=itr)
+    if remote:
+        itr = iter_monitor(itr, remote, 'alleles')
+    return itr
 
-def fingerprint_and_index_vcf(vcf=None, region=None, flanker=None, assembly=None, as_scheme=None):
-    itr = fingerprint_vcf(vcf=vcf, region=region, flanker=flanker, assembly=assembly, as_scheme=as_scheme)
+def fingerprint_and_index_vcf(vcf=None, region=None, flanker=None, assembly=None, as_scheme=None, remote=None):
+    itr = fingerprint_vcf(vcf=vcf, region=region, flanker=flanker, assembly=assembly, as_scheme=as_scheme, remote=remote)
     fingerprints = build_allele_index(itr)
     return AlleleIndex(region=region, fingerprints=fingerprints)
 
@@ -72,7 +80,7 @@ class AlleleIndex(object):
         return False
 
 class ComparisonTask:
-    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50, assembly=None, as_scheme=None, progress_bar=True):
+    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50, assembly=None, as_scheme=None):
         self.query_vcf = query_vcf
         self.target_vcf = target_vcf
         self.flanker = flanker
@@ -81,11 +89,12 @@ class ComparisonTask:
         self.slop = slop
         self.assembly = assembly
         self.as_scheme = as_scheme
-        self.progress_bar = progress_bar
+        self.tmpdir = None
+        self.remote = get_remote_monitor()
     
     def __call__(self, region=None):
         target_prints = fingerprint_and_index_vcf(vcf=self.target_vcf, region=region, flanker=self.flanker, assembly=self.assembly, as_scheme=self.as_scheme)
-        query_prints = fingerprint_vcf(vcf=self.query_vcf, region=region, flanker=self.flanker, overlaps=self.overlaps, slop=self.slop, assembly=self.assembly, as_scheme=self.as_scheme)
+        query_prints = fingerprint_vcf(vcf=self.query_vcf, region=region, flanker=self.flanker, overlaps=self.overlaps, slop=self.slop, assembly=self.assembly, as_scheme=self.as_scheme, remote=self.remote)
         if self.annotate is not None:
             query_prints = custom_itr(query_prints, self.annotate)
         for row in query_prints:
@@ -98,35 +107,29 @@ class ComparisonTask:
 
     def batch_call(self, region=None, **kw):
         batch = self(region=region, **kw)
-        return (region, list(batch))
+        df = to_dataframe(list(batch))
+        outfn = f'{region}-etl.pickle'
+        outfn = os.path.join(self.tmpdir, outfn)
+        df.to_pickle(outfn)
+        return (region, outfn)
 
-    def compare_region(self, region=None, chunk_size=100_000):
+    def compare_region(self, region=None, chunk_size=1_000_00):
         if not isinstance(region, Region):
             region = Region(region)
-        if self.progress_bar:
-            pbar = region_progress_bar(region=region)
-        else:
-            pbar = None
         regions = region.split(chunk_size)
-        all_rows = []
-        with mp.Pool() as pool:
-            itr = pool.imap(self.batch_call, regions)
-            for (cur_region, rows) in itr:
-                if pbar:
-                    pbar(pos=cur_region.stop)
-                all_rows.extend(rows)
-
-        return all_rows
-
-    def compare_regions_simple(self, region=None, chunk_size=10_000, **kw):
-        if not isinstance(region, Region):
-            region = Region(region)
-        if self.progress_bar:
-            pbar = region_progress_bar(region=region)
-        else:
-            pbar = None
-        regions = region.split(chunk_size)
-        all_rows = []
-        for reg in regions:
-            all_rows.extend(self.batch_call(reg))
-        return all_rows
+        regions = list(regions)
+        df_list = []
+        self.tmpdir = mkdtemp()
+        #print(self.tmpdir)
+        try:
+            with mp.Pool() as pool:
+                itr = pool.imap_unordered(self.batch_call, regions)
+                for (cur_region, pickle_fn) in itr:
+                    df = pd.read_pickle(pickle_fn)
+                    df_list.append(df)
+                    os.unlink(pickle_fn)
+        finally:
+            rmtree(self.tmpdir)
+            self.tmpdir = None
+        df = pd.concat(df)
+        return df
