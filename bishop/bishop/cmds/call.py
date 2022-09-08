@@ -11,55 +11,69 @@ from .. ann.iters import *
 from .. ann.fingerprint import ComparisonTask
 from .. io.intervals import load_interval_lists
 from .. ann.classify import Classifier, AnnotateCozy, ClassifyTask
+from .. io.monitor import Monitor
 
 from pysam import VariantFile
 
 import sys
 import argparse
 
-parser = argparse.ArgumentParser(description='Train allele specific classification')
-parser.add_argument(
-    '--query_vcf',
-    dest='query_vcf_path',
-    required=True,
-    help='Path to VCF to call'
-)
-parser.add_argument(
-    '--classifier',
-    dest='classifier_path',
-    default='classifier.pickle',
-    help='Path to pickled classifier'
-)
-parser.add_argument(
-    '--assembly',
-    dest='assembly_name',
-    default='GRCh38.p14',
-    help='Name of the geome assembly to use'
-)
-parser.add_argument(
-    '--output',
-    dest='output_vcf_path',
-    default='called.vcf',
-    help='Path to generated VCF',
-)
-# XXX: add support for interval lists
-# XXX: do entire genome if not provided
-parser.add_argument(
-    '-R', '--region',
-    required=True,
-    type=str,
-    help='Region to generate results from'
-)
+CLI_NAME = 'call'
+CLI_ALIASES = ()
+CLI_DESC = 'Call VCF sites based on allelic training data'
 
-#parser.add_argument('--skip_filtered', action='store_true', default=False, help='While building training set, skip filtered sites')
+def get_cli_parser(parent=None):
+    if parent:
+        parser = parent.add_parser(
+            CLI_NAME, 
+            aliases=CLI_ALIASES,
+            description=CLI_DESC
+        )
+    else:
+        parser = argparse.ArgumentParser(description=CLI_DESC)
+    #
+    parser.add_argument(
+        '--query_vcf',
+        dest='query_vcf_path',
+        required=True,
+        help='Path to VCF to call'
+    )
+    parser.add_argument(
+        '--classifier',
+        dest='classifier_path',
+        default='classifier.pickle',
+        help='Path to pickled classifier'
+    )
+    parser.add_argument(
+        '--assembly',
+        dest='assembly_name',
+        default='GRCh38.p14',
+        help='Name of the geome assembly to use'
+    )
+    parser.add_argument(
+        '--output',
+        dest='output_vcf_path',
+        default='called.vcf',
+        help='Path to generated VCF',
+    )
+    # XXX: add support for interval lists
+    # XXX: do entire genome if not provided
+    parser.add_argument(
+        '-R', '--region',
+        required=True,
+        type=str,
+        help='Region to generate results from'
+    )
 
-parser.add_argument(
-    '-S', '--stratification',
-    dest='strat_intervals',
-    action='append', 
-    type=str,
-    help='Interval file for labeling lookup'
-)
+    #parser.add_argument('--skip_filtered', action='store_true', default=False, help='While building training set, skip filtered sites')
+
+    parser.add_argument(
+        '-S', '--stratification',
+        dest='strat_intervals',
+        action='append', 
+        type=str,
+        help='Interval file for labeling lookup'
+    )
 
 
 def call(
@@ -78,8 +92,9 @@ def call(
         {'ID': 'BLOD', 'Description': 'Bishop LOD', 'Type': 'Float', 'Number': 1},
         {'ID': 'AS_BLOD', 'Description': 'Allele Specific Bishop LOD', 'Type': 'Float', 'Number': 'A'},
     ]
+    order = ('ID', 'Number', 'Type', 'Description')
     for spec in specs:
-        items = list(spec.items())
+        items = [(key, spec[key]) for key in order if key in spec]
         query_vcf.header.add_meta(key='INFO', items=items)
     output_vcf = query_vcf.to_writer(output_vcf_path)
     annotate_func = AnnotateCozy()
@@ -96,22 +111,27 @@ def call(
     cls.call_vcf_sites(output_vcf=output_vcf, region=region)
 
 def main(args):
-    call(
-        query_vcf_path=args.query_vcf_path,
-        output_vcf_path=args.output_vcf_path,
-        classifier_path=args.classifier_path,
-        assembly_name=args.assembly_name,
-        strat_intervals=args.strat_intervals,
-        region=args.region,
-    )
+    mon = Monitor()
+    mon.enable_reporting()
+    with mon:
+        call(
+            query_vcf_path=args.query_vcf_path,
+            output_vcf_path=args.output_vcf_path,
+            classifier_path=args.classifier_path,
+            assembly_name=args.assembly_name,
+            strat_intervals=args.strat_intervals,
+            region=args.region,
+        )
 
 def validate_args(args):
     pass
 
-def main_cli():
+def main_cli(args=None):
+    if args is None:
+        parser = get_cli_parser()
+        args = parser.parse_args()
     intn = lambda it: it.split('=') if '=' in it else (it.split('/')[-1], it)
     hdr = ('name', 'path')
-    args = parser.parse_args()
     args.strat_intervals = [dict(zip(hdr, intn(it))) for it in args.strat_intervals]
     args.region = Region(args.region)
     validate_args(args)

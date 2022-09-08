@@ -1,6 +1,5 @@
 import os
 from shutil import rmtree
-from tempfile import mkdtemp
 import multiprocessing as mp
 
 from . iters import *
@@ -29,9 +28,9 @@ def fingerprint_allele(itr):
             )
         yield row
 
-def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=50, assembly=None, as_scheme=None, remote=None):
+def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=0, assembly=None, as_scheme=None, remote=None):
     if slop > 0:
-        region.start = max(0, region.start - slop)
+        region.start = max(1, region.start - slop)
         region.stop = region.stop + slop
     itr = iter_sites(vcf=vcf, region=region, assembly=assembly, as_scheme=as_scheme)
     if remote:
@@ -48,8 +47,12 @@ def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=50,
         itr = iter_monitor(itr, remote, 'alleles')
     return itr
 
-def fingerprint_and_index_vcf(vcf=None, region=None, flanker=None, assembly=None, as_scheme=None, remote=None):
-    itr = fingerprint_vcf(vcf=vcf, region=region, flanker=flanker, assembly=assembly, as_scheme=as_scheme, remote=remote)
+def fingerprint_and_index_vcf(vcf=None, region=None, flanker=None, assembly=None, as_scheme=None, remote=None, slop=None):
+    itr = fingerprint_vcf(
+        vcf=vcf, region=region, flanker=flanker, 
+        assembly=assembly, as_scheme=as_scheme, 
+        slop=slop, remote=remote
+    )
     fingerprints = build_allele_index(itr)
     return AlleleIndex(region=region, fingerprints=fingerprints)
 
@@ -89,12 +92,21 @@ class ComparisonTask:
         self.slop = slop
         self.assembly = assembly
         self.as_scheme = as_scheme
-        self.tmpdir = None
-        self.remote = get_remote_monitor()
+        self.index_remote = get_remote_monitor(domain='IDX')
+        self.fingerprint_remote = get_remote_monitor(domain='FP')
     
     def __call__(self, region=None):
-        target_prints = fingerprint_and_index_vcf(vcf=self.target_vcf, region=region, flanker=self.flanker, assembly=self.assembly, as_scheme=self.as_scheme)
-        query_prints = fingerprint_vcf(vcf=self.query_vcf, region=region, flanker=self.flanker, overlaps=self.overlaps, slop=self.slop, assembly=self.assembly, as_scheme=self.as_scheme, remote=self.remote)
+        target_prints = fingerprint_and_index_vcf(
+                vcf=self.target_vcf, region=region,
+                flanker=self.flanker, slop=self.slop,
+                assembly=self.assembly, as_scheme=self.as_scheme,
+                remote=self.index_remote
+        )
+        query_prints = fingerprint_vcf(
+            vcf=self.query_vcf, region=region, flanker=self.flanker, 
+            overlaps=self.overlaps, assembly=self.assembly, 
+            as_scheme=self.as_scheme, remote=self.fingerprint_remote
+        )
         if self.annotate is not None:
             query_prints = custom_itr(query_prints, self.annotate)
         for row in query_prints:
@@ -108,28 +120,23 @@ class ComparisonTask:
     def batch_call(self, region=None, **kw):
         batch = self(region=region, **kw)
         df = to_dataframe(list(batch))
-        outfn = f'{region}-etl.pickle'
-        outfn = os.path.join(self.tmpdir, outfn)
-        df.to_pickle(outfn)
-        return (region, outfn)
+        return (region, df)
 
-    def compare_region(self, region=None, chunk_size=1_000_00):
+    def compare_region(self, region=None, chunk_size=2_500_000):
         if not isinstance(region, Region):
             region = Region(region)
+        if len(region) == 0:
+            vcf_contig = self.query_vcf.header.contigs[region.contig]
+            region = region.clone(start=1, stop=vcf_contig.length)
+        # XXX: set at construction
+        #n_threads = mp.cpu_count()
+        #regions = region.shard(n_threads)
         regions = region.split(chunk_size)
         regions = list(regions)
         df_list = []
-        self.tmpdir = mkdtemp()
-        #print(self.tmpdir)
-        try:
-            with mp.Pool() as pool:
-                itr = pool.imap_unordered(self.batch_call, regions)
-                for (cur_region, pickle_fn) in itr:
-                    df = pd.read_pickle(pickle_fn)
-                    df_list.append(df)
-                    os.unlink(pickle_fn)
-        finally:
-            rmtree(self.tmpdir)
-            self.tmpdir = None
-        df = pd.concat(df)
+        with mp.Pool() as pool:
+            itr = pool.imap(self.batch_call, regions)
+            for (cur_region, df) in itr:
+                df_list.append(df)
+        df = pd.concat(df_list)
         return df

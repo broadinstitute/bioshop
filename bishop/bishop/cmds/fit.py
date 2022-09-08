@@ -24,50 +24,63 @@ Classifiers = {
     'ada': AdaBoostClassifier, 
 }
 
-parser = argparse.ArgumentParser(description='Fit classifier to data')
+CLI_NAME = 'fit'
+CLI_DESC = 'Fit classifier to data'
+CLI_ALIASES = ()
 
-parser.add_argument(
-    '-i', '--input',
-    dest='input_list',
-    action='append',
-    required=True,
-    help='Path to one or more panda dataframes'
-)
-parser.add_argument(
-    '-o', '--output',
-    dest='classifier_path',
-    type=str,
-    default='classifier.pickle',
-    help='Path to write classifier state',
-)
-parser.add_argument(
-    '--classifier',
-    dest='classifier',
-    choices=tuple(Classifiers.keys()),
-    default='rf',
-    help='Classifier to use',
-)
-parser.add_argument(
-    '--test-frac',
-    dest='test_frac',
-    default=.3,
-    type=float,
-    help='Fraction to hold in reserve for testing'
-)
-parser.add_argument(
-    '--random-seed',
-    dest='random_seed',
-    default=None,
-    type=int,
-    help='Random seed to use (randomly assigned if left unset)'
-)
-parser.add_argument(
-    '--combine',
-    dest='combine_models',
-    default=False,
-    type=bool,
-    help='Generate two different models for snp/non-snp (default) or a single, combined model'
-)
+def get_cli_parser(parent=None):
+    if parent:
+        parser = parent.add_parser(
+            CLI_NAME, 
+            aliases=CLI_ALIASES,
+            description=CLI_DESC
+        )
+    else:
+        parser = argparse.ArgumentParser(description=CLI_DESC)
+    #
+
+    parser.add_argument(
+        '-i', '--input',
+        dest='input_list',
+        action='append',
+        required=True,
+        help='Path to one or more panda dataframes'
+    )
+    parser.add_argument(
+        '-o', '--output',
+        dest='classifier_path',
+        type=str,
+        default='classifier.pickle',
+        help='Path to write classifier state',
+    )
+    parser.add_argument(
+        '--classifier',
+        dest='classifier',
+        choices=tuple(Classifiers.keys()),
+        default='rf',
+        help='Classifier to use',
+    )
+    parser.add_argument(
+        '--test-frac',
+        dest='test_frac',
+        default=.3,
+        type=float,
+        help='Fraction to hold in reserve for testing'
+    )
+    parser.add_argument(
+        '--random-seed',
+        dest='random_seed',
+        default=None,
+        type=int,
+        help='Random seed to use (randomly assigned if left unset)'
+    )
+    parser.add_argument(
+        '--combine',
+        dest='combine_models',
+        default=False,
+        action='store_true',
+        help='Generate two different models for snp/non-snp (default) or a single, combined model'
+    )
 
 def fit_classifier(clf_class=None, df=None, test_frac=None, random_seed=None):
     clf_name = clf_class.__name__
@@ -136,6 +149,13 @@ def validate_args(args):
 
 def main_cli():
     args = parser.parse_args()
+    main(args)
+
+def main_cli(args=None):
+    if args is None:
+        parser = get_cli_parser()
+        args = parser.parse_args()
+    validate_args(args)
     main(args)
 
 if __name__ == "__main__":

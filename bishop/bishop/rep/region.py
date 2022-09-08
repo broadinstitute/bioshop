@@ -71,14 +71,22 @@ class Region(object):
     contig = property(get_contig, set_contig)
 
     def get_stop(self):
+        if self.interval.empty:
+            return None
         return self.interval.upper
     def set_stop(self, val):
+        if val is None:
+            raise TypeError(val)
         self.interval = P.closed(self.interval.lower, val)
     stop = property(get_stop, set_stop)
 
     def get_start(self):
+        if self.interval.empty:
+            return None
         return self.interval.lower
     def set_start(self, val):
+        if val is None:
+            raise TypeError(val)
         self.interval = P.closed(val, self.interval.upper)
     start = property(get_start, set_start)
 
@@ -92,16 +100,34 @@ class Region(object):
             return f'{self.chrom}:{self.interval.uppper}'
         return f'{self.chrom}:{self.interval.lower}-{self.interval.upper}'
 
+    def clone(self, **kw):
+        kw = {
+            'chrom': kw.get('chrom', kw.get('contig', self.chrom)),
+            'start': kw.get('start', self.start),
+            'stop': kw.get('stop', self.stop),
+        }
+        return self.__class__(**kw)
+
     def split(self, step=None):
         for pos in P.iterate(self.interval, step=step):
-            yield self.__class__(self.chrom, pos, pos + step)
+            if pos >= self.stop:
+                break
+            start = max(self.start, pos)
+            stop = min(self.stop, pos + step - 1)
+            yield self.__class__(self.chrom, start, stop)
 
     def shard(self, n_shards=None):
-        step = int(math.ceil(len(self) / n_shards))
+        step = int(math.floor(len(self) / n_shards))
         for pos in P.iterate(self.interval, step=step):
-            yield self.__class__(self.chrom, pos, pos + step)
+            if pos >= self.stop:
+                break
+            start = max(self.start, pos)
+            stop = min(self.stop, pos + step)
+            yield self.__class__(self.chrom, start, stop)
 
     def __len__(self):
+        if self.interval.empty:
+            return 0
         return abs(self.interval.upper - self.interval.lower)
 
     @interval_cmp

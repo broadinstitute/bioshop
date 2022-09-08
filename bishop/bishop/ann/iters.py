@@ -102,7 +102,7 @@ def custom_itr(itr=None, custom_func=None):
         row = custom_func(row)
         yield row
 
-def to_dataframe(itr, include_domains=('meta', 'feature', 'label')):
+def to_dataframe(itr, include_domains=('meta', 'feature', 'label', 'filter')):
     rows = []
     for row in itr:
         if row.filter:
