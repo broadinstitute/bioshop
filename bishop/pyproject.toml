@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bishop"
+description = "Bishop variant tools"
+requires-python = ">=3.7"
+version = "0.0.1"
+dependencies = [
+    "requests",
+    "edlib",
+    "pysam",
+    "scikit-learn",
+    "pandas",
+    "numpy",
+    "portion",
+    "fsspec",
+    "humanize",
+    "tqdm",
+    "biopython",
+    "pyfaidx",
+    "cachier"
+]
+
+[tool.setuptools.packages.find]
+include = ["bishop*"]
+
+[project.scripts]
+newt = "bishop.cmds.newt:main_cli"

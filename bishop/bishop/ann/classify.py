@@ -3,6 +3,7 @@ import pickle
 import multiprocessing as mp
 from textwrap import wrap
 
+import edlib
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -153,7 +154,13 @@ class AnnotateCozy:
     def __call__(self, row):
         if not row.filter:
             #row.feature.delta_length = abs(len(row.meta.ref) - len(row.meta.allele))
-            row.feature.delta_length = len(row.meta.ref) - len(row.meta.allele)
+            #row.feature.delta_length = len(row.meta.ref) - len(row.meta.allele)
+            # XXX: move this to rep/align?
+            if row.meta.allele == '*':
+                row.feature.edit_distance = len(row.meta.ref)
+            else:
+                al = edlib.align(row.meta.ref, row.meta.allele)
+                row.feature.edit_distance = al['editDistance']
             row.feature.is_snp = (len(row.meta.ref) == len(row.meta.allele))
             site = row.cache.site
             for fn in self.field_names:
@@ -260,7 +267,6 @@ class ClassifyTask:
             if not len(df):
                 continue
             assert last_region is None or last_region.stop < cur_region.start
-            last_region = cur_region
             itr = iter_sites(
                 vcf=self.query_vcf, region=cur_region, 
                 assembly=self.assembly, as_scheme=self.as_scheme
@@ -268,6 +274,6 @@ class ClassifyTask:
             itr = annotate_alleles_from_dataframe(itr=itr, df=df, columns=columns)
             for row in itr:
                 # XXX not here, hardwired
-                #row.cache.site.info['BLOD'] = min(row.cache.site.info['AS_BLOD'])
                 row.cache.site.info['BLOD'] = min(row.cache.site.info['AS_BLOD'])
                 output_vcf.write(row.cache.site)
+            last_region = cur_region

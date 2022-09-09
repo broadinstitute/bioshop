@@ -7,13 +7,19 @@ from .. rep.fingerprint import AlleleFingerprint
 from .. utils import is_concrete_nucleotides
 
 def iter_sites(vcf=None, region=None, assembly=None, as_scheme=None):
-    if isinstance(region, Region):
-        region = str(region)
-    sites = vcf.fetch(region=region)
+    if not isinstance(region, Region):
+        region = Region(region)
+    sites = vcf.fetch(region=str(region))
+    ff_offset = 0
     for (site_idx, site) in enumerate(sites):
+        if site.pos < region.start:
+            ff_offset += 1
+            continue
+        if site.pos > region.stop:
+            break
         row = Precis()
         row.cache.site = site
-        row.meta.site_idx = site_idx
+        row.meta.site_idx = (site_idx - ff_offset)
         row.meta.pos = site.pos
         row.meta.ref = site.ref
         if assembly and as_scheme:
@@ -121,7 +127,8 @@ def annotate_alleles_from_dataframe(itr=None, df=None, columns=None):
     for row in itr:
         site = row.cache.site
         if not row.filter:
-            hits = df[df.meta_site_idx == row.meta.site_idx]
+            #hits = df[df.meta_site_idx == row.meta.site_idx]
+            hits = df[df.meta_pos == row.meta.pos]
             hits = hits.sort_values(['meta_allele_idx'], ascending=True)
             assert len(hits) == len(site.alts)
             for col in columns:
