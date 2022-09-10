@@ -255,8 +255,6 @@ class ClassifyTask:
         with mp.Pool() as pool:
             itr = pool.imap(self, regions)
             for (cur_region, df) in itr:
-                df_list.append(df)
-            for (cur_region, df) in itr:
                 if df is None:
                     continue
                 if len(df) > 0:
