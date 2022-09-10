@@ -24,6 +24,9 @@ class VariantFlanks(object):
         up = seq[var_start - self.flank_len:var_start]
         down = seq[var_end:var_end + self.flank_len]
 
-        assert seq[var_start - self.flank_len:var_end + self.flank_len] == (up + site.ref + down)
+        #assert seq[var_start - self.flank_len:var_end + self.flank_len] == (up + site.ref + down)
+        if seq[var_start - self.flank_len:var_end + self.flank_len] != (up + site.ref + down):
+            msg = f'Reference and VCF mismatch ({chrom}:{var_start}-{var_end}) != {site.ref})'
+            raise ValueError(msg)
         #return {'chrom': chrom, 'flank_up': up, 'flank_down': down}
         return (up, down)

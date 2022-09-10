@@ -26,8 +26,8 @@ def get_label_columns(df=None, prefix='label_'):
 class Classifier:
     def __init__(self, classifier=None, label_cols=None, feature_cols=None, is_trained=False):
         self.classifier = classifier
-        if hasattr(self.classifier, 'n_jobs'):
-            self.classifier.n_jobs = -1
+        #if hasattr(self.classifier, 'n_jobs'):
+            #self.classifier.n_jobs = -1
         self._label_cols = label_cols
         self._feature_cols = feature_cols
         self.is_trained = is_trained
@@ -252,13 +252,16 @@ class ClassifyTask:
             vcf_contig = self.query_vcf.header.contigs[region.contig]
             region = region.clone(start=1, stop=vcf_contig.length)
         regions = region.split(chunk_size)
-        for region in regions:
-            (cur_region, df)  = self(region)
-            if df is None:
-                continue
-            if len(df) > 0:
-                df = self.classifier.predict(df, mode=mode)
-            yield (cur_region, df)
+        with mp.Pool() as pool:
+            itr = pool.imap(self, regions)
+            for (cur_region, df) in itr:
+                df_list.append(df)
+            for (cur_region, df) in itr:
+                if df is None:
+                    continue
+                if len(df) > 0:
+                    df = self.classifier.predict(df, mode=mode)
+                yield (cur_region, df)
 
     def call_vcf_sites(self, output_vcf=None, columns=None, region=None, **kw):
         df_itr = self.classify_region(region=region, **kw)
