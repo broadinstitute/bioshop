@@ -122,7 +122,7 @@ class ComparisonTask:
         df = to_dataframe(list(batch))
         return (region, df)
 
-    def compare_region(self, region=None, chunk_size=2_500_000):
+    def compare_region(self, region=None, chunk_size=1_000_000):
         if not isinstance(region, Region):
             region = Region(region)
         if len(region) == 0:
@@ -138,5 +138,8 @@ class ComparisonTask:
             itr = pool.imap(self.batch_call, regions)
             for (cur_region, df) in itr:
                 df_list.append(df)
+        # XXX: single threaded debug
+        #itr = map(self.batch_call, regions)
+        #df_list = [df for (_, df) in itr]
         df = pd.concat(df_list)
         return df

@@ -89,8 +89,8 @@ def etl(
         overlaps = load_interval_lists(strat_intervals, astype='dataframe')
     else:
         overlaps = None
-    target_vcf = VCF(target_vcf_path, metadata=ga, ignore_missing=True)
-    query_vcf = VCF(query_vcf_path, metadata=ga, ignore_missing=True)
+    target_vcf = VCF(target_vcf_path, metadata=ga, ignore_missing=True, drop_samples=True)
+    query_vcf = VCF(query_vcf_path, metadata=ga, ignore_missing=True, drop_samples=True)
     flanker = VariantFlanks(assembly=ga, as_scheme=as_scheme)
     annotate_func = AnnotateCozy()
     cmp = ComparisonTask(

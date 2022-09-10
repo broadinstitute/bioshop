@@ -1,4 +1,5 @@
 import time
+import random
 import threading as th
 import multiprocessing as mp
 
@@ -83,7 +84,8 @@ class Monitor(Singleton):
         print(rpt)
 
     def get_remote(self, domain=None):
-        return TelemetryRemote(cnx=self._pipe_send, domain=domain)
+        rps = (self.seconds_per_report // 2) + random.random()
+        return TelemetryRemote(cnx=self._pipe_send, domain=domain, rps=rps)
     
     def main_loop(self, timeout=.5, domain=None):
         self.running = True
@@ -196,7 +198,7 @@ class TelemetryRemote(object):
         if name not in self._cache:
             self._cache[name] = 0
         self._cache[name] += value
-        if (timestamp() + self.last_report) > self.rps:
+        if (timestamp() - self.last_report) > self.rps:
             self.flush_report()
 
 class Throughput(object):
