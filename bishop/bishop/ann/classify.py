@@ -28,6 +28,7 @@ class Classifier:
         self.classifier = classifier
         #if hasattr(self.classifier, 'n_jobs'):
             #self.classifier.n_jobs = -1
+        self.classifier.n_jobs = 1
         self._label_cols = label_cols
         self._feature_cols = feature_cols
         self.is_trained = is_trained
@@ -194,7 +195,7 @@ def balance_dataframe(df=None, label_cols=None, random_seed=None):
     df = df.sample(frac=1, random_state=random_seed)
     return df
 
-def classify_vcf(vcf=None, region=None, overlaps=None, annotate=None, batch_size=10_000, assembly=None, as_scheme=None, remote=None):
+def classify_vcf(vcf=None, region=None, classifier=None, overlaps=None, annotate=None, batch_size=10_000, assembly=None, as_scheme=None, remote=None):
     itr = iter_sites(vcf=vcf, region=region, assembly=assembly, as_scheme=as_scheme)
     if remote:
         itr = pos_monitor(itr, remote)
@@ -223,42 +224,43 @@ def numlint(thing, posinf=0, neginf=0, nan=0, **extra):
     raise TypeError(type(thing))
 
 class ClassifyTask:
-    def __init__(self, query_vcf=None, classifier_path=None, overlaps=None, annotate=None, assembly=None, as_scheme=None, progress_bar=True):
+    def __init__(self, query_vcf=None, classifier=None, overlaps=None, annotate=None, assembly=None, as_scheme=None, mode='logodds'):
         self.query_vcf = query_vcf
-        self.classifier_path = classifier_path
+        self.classifier = classifier
         self.overlaps = overlaps
         self.annotate = annotate
         self.assembly = assembly
         self.as_scheme = as_scheme
+        self.mode = mode
         self.remote = get_remote_monitor(domain='CLS')
     
     def __call__(self, region=None):
         df = classify_vcf(
             vcf=self.query_vcf, 
             region=region, 
+            classifier=self.classifier,
             overlaps=self.overlaps, 
             annotate=self.annotate, 
             assembly=self.assembly, 
             as_scheme=self.as_scheme,
             remote=self.remote
         )
+        if df is not None and len(df) > 0:
+            df = self.classifier.predict(df, mode=self.mode)
         return (region, df)
 
-    def classify_region(self, region=None, mode='logodds', chunk_size=1_000_000):
+    def classify_region(self, region=None, chunk_size=1_000_000):
         if not isinstance(region, Region):
             region = Region(region)
         if len(region) == 0:
             vcf_contig = self.query_vcf.header.contigs[region.contig]
             region = region.clone(start=1, stop=vcf_contig.length)
         regions = region.split(chunk_size)
-        classifier = Classifier.load_classifier(self.classifier_path)
         with mp.Pool() as pool:
             itr = pool.imap(self, regions)
             for (cur_region, df) in itr:
-                if df is None:
+                if df is None or not len(df):
                     continue
-                if len(df) > 0:
-                    df = classifier.predict(df, mode=mode)
                 yield (cur_region, df)
 
     def call_vcf_sites(self, output_vcf=None, columns=None, region=None, **kw):
