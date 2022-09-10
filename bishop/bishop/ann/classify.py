@@ -194,7 +194,7 @@ def balance_dataframe(df=None, label_cols=None, random_seed=None):
     df = df.sample(frac=1, random_state=random_seed)
     return df
 
-def classify_vcf(vcf=None, region=None, classifier=None, overlaps=None, annotate=None, batch_size=10_000, assembly=None, as_scheme=None, remote=None):
+def classify_vcf(vcf=None, region=None, overlaps=None, annotate=None, batch_size=10_000, assembly=None, as_scheme=None, remote=None):
     itr = iter_sites(vcf=vcf, region=region, assembly=assembly, as_scheme=as_scheme)
     if remote:
         itr = pos_monitor(itr, remote)
@@ -223,9 +223,9 @@ def numlint(thing, posinf=0, neginf=0, nan=0, **extra):
     raise TypeError(type(thing))
 
 class ClassifyTask:
-    def __init__(self, query_vcf=None, classifier=None, overlaps=None, annotate=None, assembly=None, as_scheme=None, progress_bar=True):
+    def __init__(self, query_vcf=None, classifier_path=None, overlaps=None, annotate=None, assembly=None, as_scheme=None, progress_bar=True):
         self.query_vcf = query_vcf
-        self.classifier = classifier
+        self.classifier_path = classifier_path
         self.overlaps = overlaps
         self.annotate = annotate
         self.assembly = assembly
@@ -236,7 +236,6 @@ class ClassifyTask:
         df = classify_vcf(
             vcf=self.query_vcf, 
             region=region, 
-            classifier=self.classifier,
             overlaps=self.overlaps, 
             annotate=self.annotate, 
             assembly=self.assembly, 
@@ -252,13 +251,14 @@ class ClassifyTask:
             vcf_contig = self.query_vcf.header.contigs[region.contig]
             region = region.clone(start=1, stop=vcf_contig.length)
         regions = region.split(chunk_size)
+        classifier = Classifier.load_classifier(self.classifier_path)
         with mp.Pool() as pool:
             itr = pool.imap(self, regions)
             for (cur_region, df) in itr:
                 if df is None:
                     continue
                 if len(df) > 0:
-                    df = self.classifier.predict(df, mode=mode)
+                    df = classifier.predict(df, mode=mode)
                 yield (cur_region, df)
 
     def call_vcf_sites(self, output_vcf=None, columns=None, region=None, **kw):

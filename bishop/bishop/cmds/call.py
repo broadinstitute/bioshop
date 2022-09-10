@@ -100,11 +100,10 @@ def call(
         query_vcf.header.add_meta(key='INFO', items=items)
     output_vcf = query_vcf.to_writer(output_vcf_path)
     annotate_func = AnnotateCozy()
-    classifier = Classifier.load_classifier(classifier_path)
     # XXX: support pandas dataframe saving as well?
     cls = ClassifyTask(
         query_vcf=query_vcf,
-        classifier=classifier,
+        classifier_path=classifier_path,
         overlaps=overlaps,
         annotate=annotate_func,
         assembly=ga,
