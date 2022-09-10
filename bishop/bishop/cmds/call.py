@@ -51,6 +51,7 @@ def get_cli_parser(parent=None):
         help='Name of the geome assembly to use'
     )
     parser.add_argument(
+        '-o',
         '--output',
         dest='output_vcf_path',
         default='called.vcf',
@@ -87,6 +88,7 @@ def call(
 ):
     ga = GenomeAssemblyMetadata.load(assembly_name)
     overlaps = load_interval_lists(strat_intervals, astype='dataframe')
+    # XXX: drop samples?
     query_vcf = VCF(query_vcf_path, metadata=ga, ignore_missing=True)
     specs = [
         {'ID': 'BLOD', 'Description': 'Bishop LOD', 'Type': 'Float', 'Number': 1},

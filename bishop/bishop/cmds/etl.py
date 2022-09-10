@@ -51,7 +51,7 @@ def get_cli_parser(parent=None):
         help='Name of the geome assembly to use'
     )
     parser.add_argument(
-        '--output',
+        '-o', '--output',
         dest='output_path',
         default='dataframe.pickle',
         help='Path for generated Pandas dataframe'
