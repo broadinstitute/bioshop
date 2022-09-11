@@ -224,29 +224,28 @@ def numlint(thing, posinf=0, neginf=0, nan=0, **extra):
     raise TypeError(type(thing))
 
 class ClassifyTask:
-    def __init__(self, query_vcf=None, classifier=None, overlaps=None, annotate=None, assembly=None, as_scheme=None, mode='logodds'):
+    def __init__(self, query_vcf=None, classifier_path=None, overlaps=None, annotate=None, assembly=None, as_scheme=None, mode='logodds'):
         self.query_vcf = query_vcf
-        self.classifier = classifier
+        self.classifier_path = classifier_path
         self.overlaps = overlaps
         self.annotate = annotate
         self.assembly = assembly
         self.as_scheme = as_scheme
         self.mode = mode
-        self.remote = get_remote_monitor(domain='CLS')
+        self.classify_remote = get_remote_monitor(domain='CLS')
+        self.vector_remote = get_remote_monitor(domain='VEC')
     
     def __call__(self, region=None):
         df = classify_vcf(
             vcf=self.query_vcf, 
             region=region, 
-            classifier=self.classifier,
             overlaps=self.overlaps, 
             annotate=self.annotate, 
             assembly=self.assembly, 
             as_scheme=self.as_scheme,
-            remote=self.remote
+            remote=self.vector_remote
         )
-        if df is not None and len(df) > 0:
-            df = self.classifier.predict(df, mode=self.mode)
+        #print('yo!', region)
         return (region, df)
 
     def classify_region(self, region=None, chunk_size=1_000_000):
@@ -255,26 +254,40 @@ class ClassifyTask:
         if len(region) == 0:
             vcf_contig = self.query_vcf.header.contigs[region.contig]
             region = region.clone(start=1, stop=vcf_contig.length)
-        regions = region.split(chunk_size)
+        regions = list(region.split(chunk_size))
+        next_region_itr = iter(map(str, regions))
+        next_region = next(next_region_itr)
+        waiters = {}
+        classifier = Classifier.load_classifier(self.classifier_path)
         with mp.Pool() as pool:
-            itr = pool.imap(self, regions)
+            itr = pool.imap_unordered(self, regions)
             for (cur_region, df) in itr:
-                if df is None or not len(df):
-                    continue
-                yield (cur_region, df)
+                if df is not None and len(df):
+                    df = classifier.predict(df, mode=self.mode)
+                    #print('cls', cur_region)
+                waiters[str(cur_region)] = df
+                while next_region in waiters:
+                    df = waiters.pop(next_region)
+                    if df is not None and len(df):
+                        #print('out', next_region)
+                        yield (Region(next_region), df)
+                    try:
+                        next_region = next(next_region_itr)
+                    except StopIteration:
+                        break
 
     def call_vcf_sites(self, output_vcf=None, columns=None, region=None, **kw):
         df_itr = self.classify_region(region=region, **kw)
         last_region = None
         for (cur_region, df) in df_itr: 
-            if not len(df):
-                continue
             assert last_region is None or last_region.stop < cur_region.start
             itr = iter_sites(
                 vcf=self.query_vcf, region=cur_region, 
                 assembly=self.assembly, as_scheme=self.as_scheme
             )
             itr = annotate_alleles_from_dataframe(itr=itr, df=df, columns=columns)
+            itr = pos_monitor(itr, self.classify_remote)
+            itr = iter_monitor(itr, self.classify_remote, 'sites')
             for row in itr:
                 # XXX not here, hardwired
                 row.cache.site.info['BLOD'] = min(row.cache.site.info['AS_BLOD'])
