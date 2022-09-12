@@ -7,6 +7,7 @@ from sklearn.preprocessing import *
 from sklearn.neighbors import *
 from sklearn.ensemble import *
 from sklearn.neural_network import *
+from xgboost import XGBClassifier
 
 import pickle
 import numpy as np
@@ -22,6 +23,7 @@ Classifiers = {
     'mlp': MLPClassifier,
     'kn': KNeighborsClassifier,
     'ada': AdaBoostClassifier, 
+    'xgb': XGBClassifier
 }
 
 CLI_NAME = 'fit'
@@ -85,7 +87,7 @@ def get_cli_parser(parent=None):
 def fit_classifier(clf_class=None, df=None, test_frac=None, random_seed=None):
     clf_name = clf_class.__name__
     kw = {'random_state': random_seed}
-    if clf_name == 'RandomForestClassifier':
+    if clf_name in ('RandomForestClassifier', 'XGBClassifier'):
         kw['n_jobs'] = -1
     clf = clf_class(**kw)
     clf = Classifier(classifier=clf)

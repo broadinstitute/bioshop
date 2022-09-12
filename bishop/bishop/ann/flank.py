@@ -1,8 +1,27 @@
+import random
+
+def degen_resolver(seq=None, method='to_any'):
+    # XXX: set a random seed?
+    # XXX: case sensitive?
+    # XXX: speed?
+    canonical = tuple('CGAT')
+    if method.lower() == 'to_any':
+        acceptable = set(canonical + ('N',))
+        resolver = lambda bs: bs if bs in acceptable else 'N'
+    elif method.lower() == 'to_random':
+        acceptable = set(canonical)
+        resolver = lambda bs: bs if bs in acceptable else random.choice(canonical)
+    else:
+        raise TypeError(method)
+    seq = map(resolver, seq.upper())
+    return str.join('', seq)
+
 class VariantFlanks(object):
-    def __init__(self, assembly=None, flank_len=50, as_scheme=None):
+    def __init__(self, assembly=None, flank_len=50, as_scheme=None, degen_method='to_any'):
         self.assembly = assembly
         self.as_scheme = as_scheme
         self.flank_len = flank_len
+        self.degen_method = degen_method
         self._cache = {}
 
     # at some point, this can move to a chr / pos lookup, 
@@ -16,7 +35,10 @@ class VariantFlanks(object):
         if self.as_scheme:
             chrom = self.assembly.as_scheme(chrom, as_scheme=self.as_scheme)
         if chrom not in self._cache:
-            self._cache[chrom] = self.assembly.genome[chrom].upper()
+            seq = self.assembly.genome[chrom].upper()
+            if self.degen_method:
+                seq = degen_resolver(seq, method=self.degen_method)
+            self._cache[chrom] = seq
         seq = self._cache[chrom]
         var_start = site.pos - 1
         var_end = var_start + len(site.ref)
