@@ -24,11 +24,10 @@ def get_label_columns(df=None, prefix='label_'):
     return get_columns_by_prefix(df=df, prefix=prefix)
 
 class Classifier:
-    def __init__(self, classifier=None, label_cols=None, feature_cols=None, is_trained=False):
+    def __init__(self, classifier=None, label_cols=None, feature_cols=None, is_trained=False, n_jobs=None):
         self.classifier = classifier
-        #if hasattr(self.classifier, 'n_jobs'):
-            #self.classifier.n_jobs = -1
-        self.classifier.n_jobs = 1
+        if n_jobs is not None:
+            self.n_jobs = n_jobs
         self._label_cols = label_cols
         self._feature_cols = feature_cols
         self.is_trained = is_trained
@@ -56,6 +55,19 @@ class Classifier:
             raise ValueError(msg)
         self._feature_cols = val
     feature_cols = property(get_feature_cols, set_feature_cols)
+
+    def get_n_jobs(self):
+        if hasattr(self.classifier, 'n_jobs'):
+            return self.classifier.n_jobs
+        return 1
+
+    def set_n_jobs(self, val):
+        if type(val) != int:
+            raise TypeError(val)
+        if hasattr(self.classifier, 'n_jobs'):
+            self.classifier.n_jobs = val
+
+    n_jobs = property(get_n_jobs, set_n_jobs)
 
     @property
     def classifier_class(self):
@@ -259,7 +271,10 @@ class ClassifyTask:
         next_region = next(next_region_itr)
         waiters = {}
         classifier = Classifier.load_classifier(self.classifier_path)
-        with mp.Pool() as pool:
+        n_cpu = mp.cpu_count()
+        classifier.n_jobs = n_cpu // 2
+        n_pool_jobs = max(1, (n_cpu - classifier.n_jobs))
+        with mp.Pool(processes=n_pool_jobs) as pool:
             itr = pool.imap_unordered(self, regions)
             for (cur_region, df) in itr:
                 if df is not None and len(df):

@@ -1,6 +1,7 @@
 import os
 import sys
 import argparse
+import multiprocessing as mp
 
 from sklearn.gaussian_process import *
 from sklearn.preprocessing import *
@@ -87,10 +88,9 @@ def get_cli_parser(parent=None):
 def fit_classifier(clf_class=None, df=None, test_frac=None, random_seed=None):
     clf_name = clf_class.__name__
     kw = {'random_state': random_seed}
-    if clf_name in ('RandomForestClassifier', 'XGBClassifier'):
-        kw['n_jobs'] = -1
     clf = clf_class(**kw)
-    clf = Classifier(classifier=clf)
+    n_jobs = mp.cpu_count()
+    clf = Classifier(classifier=clf, n_jobs=n_jobs)
     acc = clf.fit_and_score(df=df, test_frac=test_frac)
     return clf
 
