@@ -272,8 +272,10 @@ class ClassifyTask:
         waiters = {}
         classifier = Classifier.load_classifier(self.classifier_path)
         n_cpu = mp.cpu_count()
-        classifier.n_jobs = n_cpu // 2
-        n_pool_jobs = max(1, (n_cpu - classifier.n_jobs))
+        #classifier.n_jobs = n_cpu // 2
+        #n_pool_jobs = max(1, (n_cpu - classifier.n_jobs))
+        classifier.n_jobs = n_cpu
+        n_pool_jobs = n_cpu 
         with mp.Pool(processes=n_pool_jobs) as pool:
             itr = pool.imap_unordered(self, regions)
             for (cur_region, df) in itr:
