@@ -128,16 +128,14 @@ class ComparisonTask:
         if len(region) == 0:
             vcf_contig = self.query_vcf.header.contigs[region.contig]
             region = region.clone(start=1, stop=vcf_contig.length)
-        # XXX: set at construction
-        #n_threads = mp.cpu_count()
-        #regions = region.shard(n_threads)
-        regions = region.split(chunk_size)
-        regions = list(regions)
+        #
+        regions = list(region.split(chunk_size))
         df_list = []
         with mp.Pool() as pool:
-            itr = pool.imap(self.batch_call, regions)
-            for (cur_region, df) in itr:
-                df_list.append(df)
+            itr = pool.imap_unordered(self.batch_call, regions)
+            reg_df_list = list(itr)
+        reg_df_list = sorted(reg_df_list, key=lambda it: it[0].start)
+        df_list = [it[1] for it in reg_df_list]
         # XXX: single threaded debug
         #itr = map(self.batch_call, regions)
         #df_list = [df for (_, df) in itr]
