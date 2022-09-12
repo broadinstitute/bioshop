@@ -115,7 +115,7 @@ class Classifier:
         print(rpt)
         return acc
 
-    def predict(self, df=None, mode=None, score_col='score', epsilon=1e-5):
+    def predict(self, df=None, mode=None, score_col='score', epsilon=1e-16):
         if not self.is_trained:
             msg = 'classifier is not trained'
             raise ValueError(msg)
