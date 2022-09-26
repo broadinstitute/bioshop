@@ -1,4 +1,4 @@
-from bishop.rep.region import Region
+from bioshop.rep.region import Region
 
 def test_shard():
     reg = Region('chr3:50000000-55000000')
@@ -6,4 +6,5 @@ def test_shard():
     assert len(rl) == 8
     assert set(map(len, rl)) == set([625000])
 
-test_shard()
+if __name__ == '__main__':
+    test_shard()

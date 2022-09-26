@@ -3,8 +3,8 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bishop"
-description = "Bishop variant tools"
+name = "bioshop"
+description = "bioinformatic shop tools"
 requires-python = ">=3.7"
 version = "0.0.1"
 dependencies = [
@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["bishop*"]
+include = ["bioshop*"]
 
 [project.scripts]
-newt = "bishop.cmds.newt:main_cli"
+newt = "bioshop.cmds.newt:main_cli"
