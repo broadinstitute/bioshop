@@ -155,10 +155,15 @@ class Classifier:
 
 # XXX: task specific
 class AnnotateCozy:
-    DefaultFields = [
+    AlleleSpecificFields = [
         'AS_BaseQRankSum', 'AS_FS', 'AS_InbreedingCoeff', 'AS_MQ',
         'AS_MQRankSum', 'AS_QD', 'AS_ReadPosRankSum', 'AS_SOR'
     ]
+    SiteSpecificFields = [
+        'FS', 'ReadPosRankSum', 'MQRankSum', 'QD', 'SOR', 'DP'
+    ]
+    #DefaultFields = AlleleSpecificFields + SiteSpecificFields
+    DefaultFields = AlleleSpecificFields
 
     def __init__(self, field_names=None, default_value=0):
         self.field_names = tuple(field_names or self.DefaultFields)
