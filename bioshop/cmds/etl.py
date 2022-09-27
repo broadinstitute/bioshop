@@ -56,13 +56,20 @@ def get_cli_parser(parent=None):
         default='dataframe.pickle',
         help='Path for generated Pandas dataframe'
     )
-    # XXX: add support for interval lists
     # XXX: do entire genome if not provided
     parser.add_argument(
         '-R', '--region',
-        required=True,
+        required=False,
+        action='append', 
         type=str,
-        help='Region to generate results from'
+        help='Region(s) to generate results from'
+    )
+    parser.add_argument(
+        '-I', '--intervals',
+        required=False,
+        action='append', 
+        type=str,
+        help='Interval(s) to generate results from'
     )
 
     #parser.add_argument('--skip_filtered', action='store_true', default=False, help='While building training set, skip filtered sites')
@@ -81,7 +88,7 @@ def etl(
     target_vcf_path=None,
     assembly_name=None,
     strat_intervals=None,
-    region=None,
+    intervals=None,
     as_scheme='ucsc'
 ):
     ga = GenomeAssemblyMetadata.load(assembly_name)
@@ -89,6 +96,7 @@ def etl(
         overlaps = load_interval_lists(strat_intervals, astype='dataframe')
     else:
         overlaps = None
+
     target_vcf = VCF(target_vcf_path, metadata=ga, ignore_missing=True, drop_samples=True)
     query_vcf = VCF(query_vcf_path, metadata=ga, ignore_missing=True, drop_samples=True)
     flanker = VariantFlanks(assembly=ga, as_scheme=as_scheme)
@@ -105,7 +113,11 @@ def etl(
     mon = Monitor()
     mon.enable_reporting()
     with mon:
-        df = cmp.compare_region(region=region)
+        df_list = []
+        for region in intervals:
+            df = cmp.compare_region(region=region)
+            df_list.append(df)
+        df = pd.concat(df_list)
     return df
 
 def main(args):
@@ -114,12 +126,14 @@ def main(args):
         target_vcf_path=args.target_vcf_path,
         assembly_name=args.assembly_name,
         strat_intervals=args.strat_intervals,
-        region=args.region,
+        intervals=args.intervals,
     )
     df.to_pickle(args.output_path)
 
 def validate_args(args):
-    pass
+    if len(args.intervals) < 1:
+        msg = f'Currently, you must provide either a region or interval'
+        raise TypeError(msg)
 
 def main_cli(args=None):
     if args is None:
@@ -129,7 +143,14 @@ def main_cli(args=None):
     hdr = ('name', 'path')
     args.strat_intervals = args.strat_intervals or ()
     args.strat_intervals = [dict(zip(hdr, intn(it))) for it in args.strat_intervals]
-    args.region = Region(args.region)
+    intervals = []
+    if args.intervals:
+        for interval_list in load_interval_lists(args.intervals):
+            intervals += interval_list
+    if args.region:
+        intervals += [Region(reg) for reg in region]
+    # XXX: flatten intervals?
+    args.intervals = intervals
     validate_args(args)
     main(args)
 

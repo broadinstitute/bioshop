@@ -4,8 +4,8 @@ from .. utils import cache_func
 from .. rep.region import Region, RegionList, RegionMap, PandasRegionMap
 
 @cache_func()
-def load_interval_file_core(path=None, name=None, comment=None, index_offset=0, sep='\t', header=('chrom', 'start', 'stop'), zero_index=True, astype='regionlist'):
-    if astype not in ('region', 'regionlist', 'dataframe'):
+def load_interval_file_core(path=None, name=None, comment=None, index_offset=0, sep='\t', header=('chrom', 'start', 'stop'), zero_index=True, astype='regions'):
+    if astype not in ('regions', 'regionlist', 'dataframe'):
         raise TypeError(f'illegal value for astype {astype}')
     if name is None:
         # grab the filename without the extension
@@ -93,9 +93,12 @@ def load_interval_list(path=None, filetype=None, **kw):
 
 def load_interval_lists(interval_files, astype=None):
     interval_lists = []
-    astype = astype or 'regionlist'
-    for load_spec in interval_files:
-        load_spec = load_spec.copy()
+    astype = astype or 'regions'
+    for thing in interval_files:
+        if type(thing) == str:
+            load_spec = {'path': thing}
+        else:
+            load_spec = thing.copy()
         load_spec['astype'] = astype
         interval_lists.append(
             load_interval_list(**load_spec)
@@ -114,7 +117,7 @@ def load_interval_lists(interval_files, astype=None):
         by_chrom = {ch: gb.get_group(ch) for ch in gb.groups}
         return PandasRegionMap(by_chrom=by_chrom, names=names)
     # default
-    return interval_list
+    return interval_lists
 
 def load_intervals_from_csv(csv_path=None, astype=None):
     keys = ('name', 'path')

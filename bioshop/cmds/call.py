@@ -57,14 +57,22 @@ def get_cli_parser(parent=None):
         default='called.vcf',
         help='Path to generated VCF',
     )
-    # XXX: add support for interval lists
     # XXX: do entire genome if not provided
     parser.add_argument(
         '-R', '--region',
-        required=True,
+        required=False,
+        action='append', 
         type=str,
-        help='Region to generate results from'
+        help='Region(s) to generate results from'
     )
+    parser.add_argument(
+        '-I', '--intervals',
+        required=False,
+        action='append', 
+        type=str,
+        help='Interval(s) to generate results from'
+    )
+
 
     #parser.add_argument('--skip_filtered', action='store_true', default=False, help='While building training set, skip filtered sites')
 
@@ -83,7 +91,7 @@ def call(
     classifier_path=None,
     assembly_name=None,
     strat_intervals=None,
-    region=None,
+    intervals=None,
     as_scheme='ucsc'
 ):
     ga = GenomeAssemblyMetadata.load(assembly_name)
@@ -109,7 +117,8 @@ def call(
         assembly=ga,
         as_scheme=as_scheme,
     )
-    cls.call_vcf_sites(output_vcf=output_vcf, region=region)
+    for region in intervals:
+        cls.call_vcf_sites(output_vcf=output_vcf, region=region)
 
 def main(args):
     mon = Monitor()
@@ -121,11 +130,13 @@ def main(args):
             classifier_path=args.classifier_path,
             assembly_name=args.assembly_name,
             strat_intervals=args.strat_intervals,
-            region=args.region,
+            intervals=args.intervals,
         )
 
 def validate_args(args):
-    pass
+    if len(args.intervals) < 1:
+        msg = f'Currently, you must provide either a region or interval'
+        raise TypeError(msg)
 
 def main_cli(args=None):
     if args is None:
@@ -134,7 +145,14 @@ def main_cli(args=None):
     intn = lambda it: it.split('=') if '=' in it else (it.split('/')[-1], it)
     hdr = ('name', 'path')
     args.strat_intervals = [dict(zip(hdr, intn(it))) for it in args.strat_intervals]
-    args.region = Region(args.region)
+    intervals = []
+    if args.intervals:
+        for interval_list in load_interval_lists(args.intervals):
+            intervals += interval_list
+    if args.region:
+        intervals += [Region(reg) for reg in region_list]
+    # XXX: flatten intervals?
+    args.intervals = intervals
     validate_args(args)
     main(args)
 
