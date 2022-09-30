@@ -5,4 +5,3 @@ workflows:
      primaryDescriptorPath: /wdl/bioshop_etl.wdl
      testParameterFiles:
      -  /wdl/bioshop_etl_inputs.json
-
