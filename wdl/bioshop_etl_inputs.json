@@ -1,0 +1,17 @@
+{
+  "VariantETL.ref_fasta":"gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta",
+  "VariantETL.ref_fasta_index":"gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.fai",
+  "VariantETL.ref_dict":"gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dict",
+  "VariantETL.unpadded_intervals":"gs://gcp-public-data--broad-references/hg38/v0/hg38.even.handcurated.20k.chr20_test.intervals",
+  "VariantETL.query_vcf":"gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf",
+  "VariantETL.query_vcf_idx":"gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf.gz.tbi",
+  "VariantETL.target_vcf":"",
+  "VariantETL.target_vcf_idx":"",
+  "VariantETL.interval_strat_map":[
+        {"left": "homopol", "right": "gs://broad-dsp-spec-ops/scratch/mshand/EvaluationStratIntervalLists/GRCh38_AllHomopolymers_gt6bp_imperfectgt10bp_slop5.interval_list"},
+        {"left": "dup", "right": "gs://broad-dsp-spec-ops/scratch/mshand/EvaluationStratIntervalLists/GRCh38_alllowmapandsegdupregions.interval_list"},
+        {"left": "high_gc", "right": "gs://broad-dsp-spec-ops/scratch/mshand/EvaluationStratIntervalLists/GRCh38_gc85_slop50.interval_list"},
+        {"left": "low_gc", "right": "gs://broad-dsp-spec-ops/scratch/mshand/EvaluationStratIntervalLists/GRCh38_gcto25_slop50.interval_list"},
+        {"left": "low_complex", "right": "gs://broad-dsp-spec-ops/scratch/mshand/EvaluationStratIntervalLists/LCRFromHengHg38.interval_list"}
+    ]
+}
