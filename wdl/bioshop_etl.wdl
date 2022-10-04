@@ -37,7 +37,7 @@ task SplitIntervalList {
   }
 }
 
-task BioshopETL {
+task bioshop_variant_etl_task {
   input {
     File interval_list
     File query_vcf
@@ -63,8 +63,9 @@ task BioshopETL {
     >>>
 
   runtime {
-    memory: "3750 MiB"
-    preemptible: 1
+    memory: "10G"
+    cpu: "10"
+    preemptible: 0
     bootDiskSizeGb: 15
     disks: "local-disk " + disk_size + " HDD"
     docker: bioshop_docker
@@ -75,12 +76,12 @@ task BioshopETL {
   }
 }
 
-workflow VariantETL {
+workflow bioshop_variant_etl {
     String pipeline_version = "1.0.0"
 
     input {
         File unpadded_intervals
-        Int scatter_count = 20
+        Int scatter_count = 10
 
         File query_vcf
         File query_vcf_idx
@@ -113,7 +114,7 @@ workflow VariantETL {
     }
     
     scatter (interval_list in interval_shards.output_intervals) {
-      call BioshopETL {
+      call bioshop_variant_etl_task {
         input:
           interval_list = interval_list,
           query_vcf = query_vcf,
@@ -128,6 +129,6 @@ workflow VariantETL {
     }
 
     output {
-        Array[File] etl_dataframe = BioshopETL.etl_dataframe
+        Array[File] etl_dataframe = bioshop_variant_etl_task.etl_dataframe
     }
 }

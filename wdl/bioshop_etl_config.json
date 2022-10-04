@@ -1,0 +1,23 @@
+{
+    "inputs": {
+        "bioshop_variant_etl.ref_fasta":"",
+        "bioshop_variant_etl.ref_fasta_index":"",
+        "bioshop_variant_etl.ref_dict":"",
+        "bioshop_variant_etl.unpadded_intervals":"",
+        "bioshop_variant_etl.query_vcf":"",
+        "bioshop_variant_etl.query_vcf_idx":"",
+        "bioshop_variant_etl.target_vcf":"",
+        "bioshop_variant_etl.target_vcf_idx":"",
+        "bioshop_variant_etl.interval_strat_map":[]
+    },
+    "methodRepoMethod": {
+        "methodName": "bioshop_variant_etl",
+        "methodNamespace": "giles_hall_broad"
+    },
+    "name": "bioshop_variant_etl",
+    "namespace": "giles_hall_broad",
+    "outputs": {
+        "etl_dataframe": ""
+    },
+    "prerequisites": {}
+}
