@@ -9,3 +9,4 @@ cache
 *.bak
 *.csv
 *.dtd
+*.interval_list
