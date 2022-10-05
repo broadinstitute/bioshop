@@ -17,6 +17,7 @@ dependencies = [
     "numpy",
     "portion",
     "fsspec",
+    "gcsfs",
     "humanize",
     "tqdm",
     "biopython",
