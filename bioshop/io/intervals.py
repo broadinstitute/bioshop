@@ -4,7 +4,7 @@ from .. utils import cache_func
 from .. rep.region import Region, RegionList, RegionMap, PandasRegionMap
 
 @cache_func()
-def load_interval_file_core(path=None, name=None, comment=None, index_offset=0, sep='\t', header=('chrom', 'start', 'stop'), zero_index=True, astype='regions'):
+def load_interval_file_core(path=None, name=None, comment=None, index_offset=0, sep='\t', header=('chrom', 'start', 'stop'), zero_index=False, astype='regions'):
     if astype not in ('regions', 'regionlist', 'dataframe'):
         raise TypeError(f'illegal value for astype {astype}')
     if name is None:

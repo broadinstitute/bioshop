@@ -130,14 +130,15 @@ class ComparisonTask:
             region = region.clone(start=1, stop=vcf_contig.length)
         #
         regions = list(region.split(chunk_size))
-        df_list = []
         with mp.Pool() as pool:
             itr = pool.imap_unordered(self.batch_call, regions)
             reg_df_list = list(itr)
+        """
+            # XXX: single threaded debug
+            itr = map(self.batch_call, regions)
+            reg_df_list = list(itr)
+        """
         reg_df_list = sorted(reg_df_list, key=lambda it: it[0].start)
         df_list = [it[1] for it in reg_df_list]
-        # XXX: single threaded debug
-        #itr = map(self.batch_call, regions)
-        #df_list = [df for (_, df) in itr]
         df = pd.concat(df_list)
         return df

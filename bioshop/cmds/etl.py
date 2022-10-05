@@ -39,10 +39,22 @@ def get_cli_parser(parent=None):
         help='Path to VCF to call'
     )
     parser.add_argument(
+        '--query_vcf_index',
+        dest='query_vcf_index_path',
+        required=False,
+        help='Path to VCF index to call'
+    )
+    parser.add_argument(
         '--target_vcf',
         dest='target_vcf_path',
         required=True, 
         help='Path to VCF with valid calls from population'
+    )
+    parser.add_argument(
+        '--target_vcf_index',
+        dest='target_vcf_index_path',
+        required=False, 
+        help='Path to VCF index with valid calls from population'
     )
     parser.add_argument(
         '--assembly',
@@ -85,7 +97,9 @@ def get_cli_parser(parent=None):
 
 def etl(
     query_vcf_path=None, 
+    query_vcf_index_path=None, 
     target_vcf_path=None,
+    target_vcf_index_path=None,
     assembly_name=None,
     strat_intervals=None,
     intervals=None,
@@ -97,8 +111,8 @@ def etl(
     else:
         overlaps = None
 
-    target_vcf = VCF(target_vcf_path, metadata=ga, ignore_missing=True, drop_samples=True)
-    query_vcf = VCF(query_vcf_path, metadata=ga, ignore_missing=True, drop_samples=True)
+    target_vcf = VCF(target_vcf_path, index_filename=target_vcf_index_path, metadata=ga, ignore_missing=True, drop_samples=True)
+    query_vcf = VCF(query_vcf_path, index_filename=query_vcf_index_path, metadata=ga, ignore_missing=True, drop_samples=True)
     flanker = VariantFlanks(assembly=ga, as_scheme=as_scheme)
     annotate_func = AnnotateCozy()
     cmp = ComparisonTask(
@@ -123,7 +137,9 @@ def etl(
 def main(args):
     df = etl(
         query_vcf_path=args.query_vcf_path,
+        query_vcf_index_path=args.query_vcf_index_path,
         target_vcf_path=args.target_vcf_path,
+        target_vcf_index_path=args.target_vcf_index_path,
         assembly_name=args.assembly_name,
         strat_intervals=args.strat_intervals,
         intervals=args.intervals,
