@@ -28,11 +28,11 @@ def fingerprint_allele(itr):
             )
         yield row
 
-def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=0, assembly=None, as_scheme=None, remote=None):
+def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=0, remote=None):
     if slop > 0:
         region.start = max(1, region.start - slop)
         region.stop = region.stop + slop
-    itr = iter_sites(vcf=vcf, region=region, assembly=assembly, as_scheme=as_scheme)
+    itr = iter_sites(vcf=vcf, region=region)
     if remote:
         itr = pos_monitor(itr, remote)
         itr = iter_monitor(itr, remote, 'sites')
@@ -47,10 +47,9 @@ def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=0, 
         itr = iter_monitor(itr, remote, 'alleles')
     return itr
 
-def fingerprint_and_index_vcf(vcf=None, region=None, flanker=None, assembly=None, as_scheme=None, remote=None, slop=None):
+def fingerprint_and_index_vcf(vcf=None, region=None, flanker=None, remote=None, slop=None):
     itr = fingerprint_vcf(
         vcf=vcf, region=region, flanker=flanker, 
-        assembly=assembly, as_scheme=as_scheme, 
         slop=slop, remote=remote
     )
     fingerprints = build_allele_index(itr)
@@ -83,15 +82,13 @@ class AlleleIndex(object):
         return False
 
 class ComparisonTask:
-    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50, assembly=None, as_scheme=None):
+    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50):
         self.query_vcf = query_vcf
         self.target_vcf = target_vcf
         self.flanker = flanker
         self.overlaps = overlaps
         self.annotate = annotate
         self.slop = slop
-        self.assembly = assembly
-        self.as_scheme = as_scheme
         self.index_remote = get_remote_monitor(domain='IDX')
         self.fingerprint_remote = get_remote_monitor(domain='FP')
     
@@ -99,13 +96,12 @@ class ComparisonTask:
         target_prints = fingerprint_and_index_vcf(
                 vcf=self.target_vcf, region=region,
                 flanker=self.flanker, slop=self.slop,
-                assembly=self.assembly, as_scheme=self.as_scheme,
                 remote=self.index_remote
         )
         query_prints = fingerprint_vcf(
             vcf=self.query_vcf, region=region, flanker=self.flanker, 
-            overlaps=self.overlaps, assembly=self.assembly, 
-            as_scheme=self.as_scheme, remote=self.fingerprint_remote
+            overlaps=self.overlaps, 
+            remote=self.fingerprint_remote
         )
         if self.annotate is not None:
             query_prints = custom_itr(query_prints, self.annotate)

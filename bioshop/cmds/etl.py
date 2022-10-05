@@ -3,7 +3,7 @@ import random
 from functools import partial
 from pprint import pprint
 
-from .. rep.assembly import GenomeAssemblyMetadata
+from .. rep.reference import Reference
 from .. rep.vcf import VCF
 from .. rep.region import Region
 from .. ann.flank import VariantFlanks
@@ -57,10 +57,16 @@ def get_cli_parser(parent=None):
         help='Path to VCF index with valid calls from population'
     )
     parser.add_argument(
-        '--assembly',
-        dest='assembly_name',
-        default='GRCh38.p14',
-        help='Name of the geome assembly to use'
+        '--reference',
+        dest='reference_path',
+        required=True,
+        help='Path to genome reference'
+    )
+    parser.add_argument(
+        '--reference_index',
+        dest='reference_index_path',
+        required=False,
+        help='Path to index for genome reference'
     )
     parser.add_argument(
         '-o', '--output',
@@ -100,20 +106,25 @@ def etl(
     query_vcf_index_path=None, 
     target_vcf_path=None,
     target_vcf_index_path=None,
-    assembly_name=None,
+    reference_path=None,
+    reference_index_path=None,
     strat_intervals=None,
     intervals=None,
     as_scheme='ucsc'
 ):
-    ga = GenomeAssemblyMetadata.load(assembly_name)
+
     if strat_intervals:
         overlaps = load_interval_lists(strat_intervals, astype='dataframe')
     else:
         overlaps = None
 
-    target_vcf = VCF(target_vcf_path, index_filename=target_vcf_index_path, metadata=ga, ignore_missing=True, drop_samples=True)
-    query_vcf = VCF(query_vcf_path, index_filename=query_vcf_index_path, metadata=ga, ignore_missing=True, drop_samples=True)
-    flanker = VariantFlanks(assembly=ga, as_scheme=as_scheme)
+    reference = Reference(
+        reference_path=reference_path, 
+        reference_index_path=reference_index_path
+    )
+    target_vcf = VCF(target_vcf_path, index_filename=target_vcf_index_path, drop_samples=True)
+    query_vcf = VCF(query_vcf_path, index_filename=query_vcf_index_path, drop_samples=True)
+    flanker = VariantFlanks(reference=reference)
     annotate_func = AnnotateCozy()
     cmp = ComparisonTask(
         query_vcf=query_vcf,
@@ -121,8 +132,6 @@ def etl(
         flanker=flanker,
         overlaps=overlaps,
         annotate=annotate_func,
-        assembly=ga,
-        as_scheme=as_scheme,
     )
     mon = Monitor()
     mon.enable_reporting()
@@ -136,11 +145,12 @@ def etl(
 
 def main(args):
     df = etl(
+        reference_path=args.reference_path,
+        reference_index_path=args.reference_index_path,
         query_vcf_path=args.query_vcf_path,
         query_vcf_index_path=args.query_vcf_index_path,
         target_vcf_path=args.target_vcf_path,
         target_vcf_index_path=args.target_vcf_index_path,
-        assembly_name=args.assembly_name,
         strat_intervals=args.strat_intervals,
         intervals=args.intervals,
     )

@@ -17,9 +17,8 @@ def degen_resolver(seq=None, method='to_any'):
     return str.join('', seq)
 
 class VariantFlanks(object):
-    def __init__(self, assembly=None, flank_len=50, as_scheme=None, degen_method='to_any'):
-        self.assembly = assembly
-        self.as_scheme = as_scheme
+    def __init__(self, reference=None, flank_len=50, degen_method='to_any'):
+        self.reference = reference
         self.flank_len = flank_len
         self.degen_method = degen_method
         self._cache = {}
@@ -32,10 +31,8 @@ class VariantFlanks(object):
     #
     def get_flanks(self, site=None):
         chrom = site.chrom
-        if self.as_scheme:
-            chrom = self.assembly.as_scheme(chrom, as_scheme=self.as_scheme)
         if chrom not in self._cache:
-            seq = self.assembly.genome[chrom].upper()
+            seq = self.reference[chrom].upper()
             if self.degen_method:
                 seq = degen_resolver(seq, method=self.degen_method)
             self._cache[chrom] = seq

@@ -6,7 +6,7 @@ from .. rep.region import Region
 from .. rep.fingerprint import AlleleFingerprint
 from .. utils import is_concrete_nucleotides
 
-def iter_sites(vcf=None, region=None, assembly=None, as_scheme=None):
+def iter_sites(vcf=None, region=None):
     if not isinstance(region, Region):
         region = Region(region)
     sites = vcf.fetch(region=str(region))
@@ -22,10 +22,7 @@ def iter_sites(vcf=None, region=None, assembly=None, as_scheme=None):
         row.meta.site_idx = (site_idx - ff_offset)
         row.meta.pos = site.pos
         row.meta.ref = site.ref
-        if assembly and as_scheme:
-            row.meta.chrom = assembly.as_scheme(site.chrom, as_scheme=as_scheme)
-        else:
-            row.meta.chrom = site.chrom
+        row.meta.chrom = site.chrom
         yield row
 
 def pos_monitor(itr=None, remote=None, name='nucs'):

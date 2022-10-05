@@ -212,8 +212,8 @@ def balance_dataframe(df=None, label_cols=None, random_seed=None):
     df = df.sample(frac=1, random_state=random_seed)
     return df
 
-def classify_vcf(vcf=None, region=None, classifier=None, overlaps=None, annotate=None, batch_size=10_000, assembly=None, as_scheme=None, remote=None):
-    itr = iter_sites(vcf=vcf, region=region, assembly=assembly, as_scheme=as_scheme)
+def classify_vcf(vcf=None, region=None, classifier=None, overlaps=None, annotate=None, batch_size=10_000, remote=None):
+    itr = iter_sites(vcf=vcf, region=region)
     if remote:
         itr = pos_monitor(itr, remote)
         itr = iter_monitor(itr, remote, 'sites')
@@ -241,13 +241,12 @@ def numlint(thing, posinf=0, neginf=0, nan=0, **extra):
     raise TypeError(type(thing))
 
 class ClassifyTask:
-    def __init__(self, query_vcf=None, classifier_path=None, overlaps=None, annotate=None, assembly=None, as_scheme=None, mode='logodds'):
+    def __init__(self, query_vcf=None, classifier_path=None, overlaps=None, annotate=None, reference=None, mode='logodds'):
         self.query_vcf = query_vcf
         self.classifier_path = classifier_path
         self.overlaps = overlaps
         self.annotate = annotate
-        self.assembly = assembly
-        self.as_scheme = as_scheme
+        self.reference = reference
         self.mode = mode
         self.classify_remote = get_remote_monitor(domain='CLS')
         self.vector_remote = get_remote_monitor(domain='VEC')
@@ -258,8 +257,6 @@ class ClassifyTask:
             region=region, 
             overlaps=self.overlaps, 
             annotate=self.annotate, 
-            assembly=self.assembly, 
-            as_scheme=self.as_scheme,
             remote=self.vector_remote
         )
         #print('yo!', region)
@@ -304,8 +301,7 @@ class ClassifyTask:
         for (cur_region, df) in df_itr: 
             assert last_region is None or last_region.stop < cur_region.start
             itr = iter_sites(
-                vcf=self.query_vcf, region=cur_region, 
-                assembly=self.assembly, as_scheme=self.as_scheme
+                vcf=self.query_vcf, region=cur_region
             )
             itr = annotate_alleles_from_dataframe(itr=itr, df=df, columns=columns)
             itr = pos_monitor(itr, self.classify_remote)
