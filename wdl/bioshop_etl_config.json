@@ -5,9 +5,9 @@
         "bioshop_variant_etl.ref_dict":"",
         "bioshop_variant_etl.unpadded_intervals":"",
         "bioshop_variant_etl.query_vcf":"",
-        "bioshop_variant_etl.query_vcf_idx":"",
+        "bioshop_variant_etl.query_vcf_index":"",
         "bioshop_variant_etl.target_vcf":"",
-        "bioshop_variant_etl.target_vcf_idx":"",
+        "bioshop_variant_etl.target_vcf_index":"",
         "bioshop_variant_etl.interval_strat_map":[]
     },
     "methodRepoMethod": {

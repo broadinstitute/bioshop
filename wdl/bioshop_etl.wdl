@@ -41,7 +41,9 @@ task bioshop_variant_etl_task {
   input {
     File interval_list
     File query_vcf
+    File query_vcf_index
     File target_vcf
+    File target_vcf_index
     Array[String] interval_strats
     File ref_fasta
     File ref_fasta_index
@@ -56,7 +58,11 @@ task bioshop_variant_etl_task {
   command <<<
     newt etl \
       --query_vcf ~{query_vcf} \
+      --query_vcf_index ~{query_vcf_index} \
       --target_vcf ~{target_vcf} \
+      --target_vcf_index ~{target_vcf_index} \
+      --reference ~{ref_fasta} \
+      --reference_index ~{ref_fasta_index} \
       -I ~{interval_list} \
       ~{sep=" " interval_strats} \
       -o ~{etl_dataframe}
@@ -84,9 +90,9 @@ workflow bioshop_variant_etl {
         Int scatter_count = 10
 
         File query_vcf
-        File query_vcf_idx
+        File query_vcf_index
         File target_vcf
-        File target_vcf_idx
+        File target_vcf_index
 
         File ref_fasta
         File ref_fasta_index
@@ -118,12 +124,14 @@ workflow bioshop_variant_etl {
         input:
           interval_list = interval_list,
           query_vcf = query_vcf,
+          query_vcf_index = query_vcf_index,
           target_vcf = target_vcf,
+          target_vcf_index = target_vcf_index,
           interval_strats = interval_strats,
           ref_fasta = ref_fasta,
           ref_fasta_index = ref_fasta_index,
           ref_dict = ref_dict,
-          disk_size = 1000,
+          disk_size = large_disk,
           output_basename = basename(query_vcf),
       }
     }
