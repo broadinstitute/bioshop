@@ -2,11 +2,23 @@
 
 import argparse
 
+from .. version import VERSION_INFO
 from . import etl 
 from . import fit 
 from . import call 
 
 Commands = ['etl', 'fit', 'call']
+
+
+BANNER_TEXT = f"""
+ _   _         _
+| |_|_|___ ___| |_ ___ ___
+| . | | . |_ -|   | . | . |
+|___|_|___|___|_|_|___|  _|  
+                      |_|    {VERSION_INFO}
+"""
+
+def banner():
 
 parser = argparse.ArgumentParser(prog='newt', description='Newt command runner')
 subs = parser.add_subparsers(dest='command')

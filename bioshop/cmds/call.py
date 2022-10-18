@@ -3,7 +3,7 @@ import random
 from functools import partial
 from pprint import pprint
 
-from .. rep.assembly import GenomeAssemblyMetadata
+from .. rep.reference import Reference
 from .. rep.vcf import VCF
 from .. rep.region import Region
 from .. ann.flank import VariantFlanks
@@ -39,16 +39,28 @@ def get_cli_parser(parent=None):
         help='Path to VCF to call'
     )
     parser.add_argument(
+        '--query_vcf_index',
+        dest='query_vcf_index_path',
+        required=False,
+        help='Path to VCF index to call'
+    )
+    parser.add_argument(
+        '--reference',
+        dest='reference_path',
+        required=True,
+        help='Path to genome reference'
+    )
+    parser.add_argument(
+        '--reference_index',
+        dest='reference_index_path',
+        required=False,
+        help='Path to index for genome reference'
+    )
+    parser.add_argument(
         '--classifier',
         dest='classifier_path',
         default='classifier.pickle',
         help='Path to pickled classifier'
-    )
-    parser.add_argument(
-        '--assembly',
-        dest='assembly_name',
-        default='GRCh38.p14',
-        help='Name of the geome assembly to use'
     )
     parser.add_argument(
         '-o',
@@ -87,17 +99,26 @@ def get_cli_parser(parent=None):
 
 def call(
     query_vcf_path=None, 
+    query_vcf_index_path=None, 
+    reference_path=None,
+    reference_index_path=None,
     output_vcf_path=None, 
     classifier_path=None,
-    assembly_name=None,
     strat_intervals=None,
     intervals=None,
-    as_scheme='ucsc'
 ):
-    ga = GenomeAssemblyMetadata.load(assembly_name)
-    overlaps = load_interval_lists(strat_intervals, astype='dataframe')
+    if strat_intervals:
+        overlaps = load_interval_lists(strat_intervals, astype='dataframe')
+    else:
+        overlaps = None
+
+    reference = Reference(
+        reference_path=reference_path, 
+        reference_index_path=reference_index_path
+    )
+
     # XXX: drop samples?
-    query_vcf = VCF(query_vcf_path, metadata=ga, ignore_missing=True)
+    query_vcf = VCF(query_vcf_path, ignore_missing=True)
     specs = [
         {'ID': 'BLOD', 'Description': 'Bishop LOD', 'Type': 'Float', 'Number': 1},
         {'ID': 'AS_BLOD', 'Description': 'Allele Specific Bishop LOD', 'Type': 'Float', 'Number': 'A'},
@@ -108,27 +129,25 @@ def call(
         query_vcf.header.add_meta(key='INFO', items=items)
     output_vcf = query_vcf.to_writer(output_vcf_path)
     annotate_func = AnnotateCozy()
-    # XXX: support pandas dataframe saving as well?
     cls = ClassifyTask(
         query_vcf=query_vcf,
         classifier_path=classifier_path,
         overlaps=overlaps,
         annotate=annotate_func,
-        assembly=ga,
-        as_scheme=as_scheme,
     )
-    for region in intervals:
-        cls.call_vcf_sites(output_vcf=output_vcf, region=region)
-
-def main(args):
     mon = Monitor()
     mon.enable_reporting()
     with mon:
+        cls.call_vcf_sites(output_vcf=output_vcf, region_list=intervals)
+
+def main(args):
         call(
+            reference_path=args.reference_path,
+            reference_index_path=args.reference_index_path,
             query_vcf_path=args.query_vcf_path,
+            query_vcf_index_path=args.query_vcf_index_path,
             output_vcf_path=args.output_vcf_path,
             classifier_path=args.classifier_path,
-            assembly_name=args.assembly_name,
             strat_intervals=args.strat_intervals,
             intervals=args.intervals,
         )

@@ -28,12 +28,48 @@ task SplitIntervalList {
     memory: "3750 MiB"
     preemptible: 1
     bootDiskSizeGb: 15
-    disks: "local-disk " + disk_size + " HDD"
+    disks: "local-disk " + disk_size + " LOCAL"
     docker: gatk_docker
   }
 
   output {
     Array[File] output_intervals = glob("scatterDir/*")
+  }
+}
+
+task bioshop_variant_fit_task {
+  input {
+    Array[File] classifier_training_data
+    Boolean classifier_model_combine
+    String classifier_model_type
+
+    Int disk_size
+    String bioshop_docker = "gcr.io/broad-jukebox-vm/bioshop:latest"
+    String output_basename
+  }
+
+  String output_path = output_basename + "_" + classifier_model_type + "-classifier.pickle"
+  String combine_arg = if classifier_model_combine then "--combine" else ""
+
+  command <<<
+    newt fit \
+      ~{combine_arg} \
+      --classifier ~{classifier_model_type} \
+      ~{sep=" " prefix("-i ", classifier_training_data)} \
+      -o ~{output_path}
+    >>>
+
+  runtime {
+    memory: "64G"
+    cpu: "16"
+    preemptible: 0
+    bootDiskSizeGb: 15
+    disks: "local-disk " + disk_size + " HDD"
+    docker: bioshop_docker
+  }
+
+  output {
+    File classifier_path = output_path
   }
 }
 
@@ -69,11 +105,11 @@ task bioshop_variant_etl_task {
     >>>
 
   runtime {
-    memory: "10G"
-    cpu: "10"
+    memory: "48G"
+    cpu: "16"
     preemptible: 0
     bootDiskSizeGb: 15
-    disks: "local-disk " + disk_size + " HDD"
+    disks: "local-disk " + disk_size + " LOCAL"
     docker: bioshop_docker
   }
 
@@ -99,11 +135,16 @@ workflow bioshop_variant_etl {
         File ref_dict
         Array[Pair[String, String]] interval_strat_map
 
-        Int small_disk = 100
-        Int medium_disk = 200
-        Int large_disk = 1000
-        Int huge_disk = 2000
+        Boolean classifier_model_combine = true
+        String classifier_model_type = "xgb"
+
+        Int small_disk = 128
+        Int medium_disk = 256
+        Int large_disk = 1024
+        Int huge_disk = 2048
     }
+
+    String output_basename = basename(query_vcf)
 
     call SplitIntervalList as interval_shards {
       input:
@@ -120,7 +161,7 @@ workflow bioshop_variant_etl {
     }
     
     scatter (interval_list in interval_shards.output_intervals) {
-      call bioshop_variant_etl_task {
+      call bioshop_variant_etl_task as etl {
         input:
           interval_list = interval_list,
           query_vcf = query_vcf,
@@ -132,11 +173,20 @@ workflow bioshop_variant_etl {
           ref_fasta_index = ref_fasta_index,
           ref_dict = ref_dict,
           disk_size = large_disk,
-          output_basename = basename(query_vcf),
+          output_basename = output_basename
       }
     }
 
+    call bioshop_variant_fit_task as fit {
+      input:
+        classifier_training_data = etl.etl_dataframe,
+        classifier_model_type = classifier_model_type,
+        classifier_model_combine = classifier_model_combine,
+        disk_size = large_disk,
+        output_basename = output_basename
+    }
+
     output {
-        Array[File] etl_dataframe = bioshop_variant_etl_task.etl_dataframe
+        File classifier_path = fit.classifier_path
     }
 }

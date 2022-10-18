@@ -241,12 +241,11 @@ def numlint(thing, posinf=0, neginf=0, nan=0, **extra):
     raise TypeError(type(thing))
 
 class ClassifyTask:
-    def __init__(self, query_vcf=None, classifier_path=None, overlaps=None, annotate=None, reference=None, mode='logodds'):
+    def __init__(self, query_vcf=None, classifier_path=None, overlaps=None, annotate=None, mode='logodds'):
         self.query_vcf = query_vcf
         self.classifier_path = classifier_path
         self.overlaps = overlaps
         self.annotate = annotate
-        self.reference = reference
         self.mode = mode
         self.classify_remote = get_remote_monitor(domain='CLS')
         self.vector_remote = get_remote_monitor(domain='VEC')
@@ -259,17 +258,21 @@ class ClassifyTask:
             annotate=self.annotate, 
             remote=self.vector_remote
         )
-        #print('yo!', region)
         return (region, df)
 
-    def classify_region(self, region=None, chunk_size=1_000_000):
-        if not isinstance(region, Region):
-            region = Region(region)
-        if len(region) == 0:
-            vcf_contig = self.query_vcf.header.contigs[region.contig]
-            region = region.clone(start=1, stop=vcf_contig.length)
-        regions = list(region.split(chunk_size))
-        next_region_itr = iter(map(str, regions))
+    def classify_region(self, region_list=None, chunk_size=1_000_000):
+        # chunk regions
+        chunk_list = []
+        for region in region_list:
+            if not isinstance(region, Region):
+                region = Region(region)
+            if len(region) == 0:
+                vcf_contig = self.query_vcf.header.contigs[region.contig]
+                region = region.clone(start=1, stop=vcf_contig.length)
+            chunk_list += list(region.split(chunk_size))
+        assert len(chunk_list) > 0
+
+        next_region_itr = iter(map(str, chunk_list))
         next_region = next(next_region_itr)
         waiters = {}
         classifier = Classifier.load_classifier(self.classifier_path)
@@ -279,7 +282,7 @@ class ClassifyTask:
         classifier.n_jobs = n_cpu
         n_pool_jobs = n_cpu 
         with mp.Pool(processes=n_pool_jobs) as pool:
-            itr = pool.imap_unordered(self, regions)
+            itr = pool.imap_unordered(self, chunk_list)
             for (cur_region, df) in itr:
                 if df is not None and len(df):
                     df = classifier.predict(df, mode=self.mode)
@@ -295,11 +298,14 @@ class ClassifyTask:
                     except StopIteration:
                         break
 
-    def call_vcf_sites(self, output_vcf=None, columns=None, region=None, **kw):
-        df_itr = self.classify_region(region=region, **kw)
+    def call_vcf_sites(self, output_vcf=None, columns=None, region_list=None, **kw):
+        df_itr = self.classify_region(region_list=region_list, **kw)
         last_region = None
         for (cur_region, df) in df_itr: 
-            assert last_region is None or last_region.stop < cur_region.start
+            assert \
+                (last_region is None) or \
+                last_region.chrom != cur_region.chrom or \
+                last_region.stop < cur_region.start
             itr = iter_sites(
                 vcf=self.query_vcf, region=cur_region
             )

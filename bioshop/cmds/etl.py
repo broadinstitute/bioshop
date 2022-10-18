@@ -109,8 +109,7 @@ def etl(
     reference_path=None,
     reference_index_path=None,
     strat_intervals=None,
-    intervals=None,
-    as_scheme='ucsc'
+    intervals=None
 ):
 
     if strat_intervals:
@@ -136,11 +135,7 @@ def etl(
     mon = Monitor()
     mon.enable_reporting()
     with mon:
-        df_list = []
-        for region in intervals:
-            df = cmp.compare_region(region=region)
-            df_list.append(df)
-        df = pd.concat(df_list)
+        df = cmp.compare_regions(region_list=intervals)
     return df
 
 def main(args):

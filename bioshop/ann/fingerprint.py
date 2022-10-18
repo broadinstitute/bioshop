@@ -118,23 +118,29 @@ class ComparisonTask:
         df = to_dataframe(list(batch))
         return (region, df)
 
-    def compare_region(self, region=None, chunk_size=1_000_000):
-        if not isinstance(region, Region):
-            region = Region(region)
-        if len(region) == 0:
-            vcf_contig = self.query_vcf.header.contigs[region.contig]
-            region = region.clone(start=1, stop=vcf_contig.length)
-        #
-        regions = list(region.split(chunk_size))
+    def compare_regions(self, region_list=None, chunk_size=1_000_000):
+        # chunk regions
+        chunk_list = []
+        for region in region_list:
+            if not isinstance(region, Region):
+                region = Region(region)
+            if len(region) == 0:
+                vcf_contig = self.query_vcf.header.contigs[region.contig]
+                region = region.clone(start=1, stop=vcf_contig.length)
+            chunk_list += list(region.split(chunk_size))
+        assert len(chunk_list) > 0
+
         with mp.Pool() as pool:
-            itr = pool.imap_unordered(self.batch_call, regions)
+            itr = pool.imap_unordered(self.batch_call, chunk_list)
             reg_df_list = list(itr)
+
         """
             # XXX: single threaded debug
             itr = map(self.batch_call, regions)
             reg_df_list = list(itr)
         """
+
         reg_df_list = sorted(reg_df_list, key=lambda it: it[0].start)
-        df_list = [it[1] for it in reg_df_list]
-        df = pd.concat(df_list)
+        df_list = [it[1] for it in reg_df_list if it[1] is not None]
+        df = pd.concat(df_list) if len(df_list) else None
         return df
