@@ -37,77 +37,74 @@ task SplitIntervalList {
   }
 }
 
-task bioshop_variant_fit_task {
+task gather_vcfs {
   input {
-    Array[File] classifier_training_data
-    Boolean classifier_model_combine
-    String classifier_model_type
+    Array[File] input_vcfs
+    String output_vcf_basename
 
-    Int disk_size
-    String bioshop_docker = "gcr.io/broad-jukebox-vm/bioshop:latest"
-    String output_basename
+    String gatk_docker = "us.gcr.io/broad-gatk/gatk:4.2.6.1"
+    Int cpu = 1
+    Int memory_mb = 16000
+    Int disk_size = disk_size
   }
-
-  String output_path = output_basename + "_" + classifier_model_type + "-classifier.pickle"
-  String combine_arg = if classifier_model_combine then "--combine" else ""
+  Int command_mem = memory_mb - 1000
+  Int max_heap = memory_mb - 500
 
   command <<<
     set -e -o pipefail
 
-    newt fit \
-      ~{combine_arg} \
-      --classifier ~{classifier_model_type} \
-      ~{sep=" " prefix("-i ", classifier_training_data)} \
-      -o ~{output_path}
-    >>>
+    gatk --java-options "-Xms~{command_mem}m -Xmx~{max_heap}m" \
+    GatherVcfs \
+    -I ~{sep=' -I ' input_vcfs} \
+    --REORDER_INPUT_BY_FIRST_VARIANT \
+    -O ~{output_vcf_basename}.vcf.gz
 
+    gatk --java-options "-Xms~{command_mem}m -Xmx~{max_heap}m" \
+    IndexFeatureFile -I ~{output_vcf_basename}.vcf.gz
+  >>>
   runtime {
-    memory: "64G"
-    cpu: "16"
-    preemptible: 0
-    bootDiskSizeGb: 15
-    disks: "local-disk " + disk_size + " HDD"
-    docker: bioshop_docker
+    docker: gatk_docker
+    disks: "local-disk ${disk_size} LOCAL"
+    memory: "${memory_mb} MiB"
+    cpu: cpu
   }
-
   output {
-    File classifier_path = output_path
+    File output_vcf = "~{output_vcf_basename}.vcf.gz"
+    File output_vcf_index = "~{output_vcf_basename}.vcf.gz.tbi"
   }
 }
 
-task bioshop_variant_etl_task {
+task bioshop_variant_call_task {
   input {
     File interval_list
     File query_vcf
     File query_vcf_index
-    File target_vcf
-    File target_vcf_index
-    Array[String] interval_strats
     File ref_fasta
     File ref_fasta_index
     File ref_dict
+    File model
+    Array[String] interval_strats
     Int disk_size
     String bioshop_docker = "gcr.io/broad-jukebox-vm/bioshop:latest"
     String output_basename
   }
 
-  String etl_dataframe = output_basename + "-etl-df.pickle"
+  String output_vcf = output_basename + "-called.vcf"
 
   command <<<
     set -e -o pipefail
 
     touch ~{query_vcf} ~{target_vcf}
 
-    newt etl \
+    newt call \
       --query_vcf ~{query_vcf} \
       --query_vcf_index ~{query_vcf_index} \
-      --target_vcf ~{target_vcf} \
-      --target_vcf_index ~{target_vcf_index} \
       --reference ~{ref_fasta} \
       --reference_index ~{ref_fasta_index} \
+      --classifier ~{model} \
       -I ~{interval_list} \
       ~{sep=" " interval_strats} \
-      -o ~{etl_dataframe}
+      -o ~{output_vcf}
     >>>
 
   runtime {
@@ -120,11 +117,11 @@ task bioshop_variant_etl_task {
   }
 
   output {
-    File etl_dataframe = etl_dataframe
+    File output_vcf = output_vcf
   }
 }
 
-workflow bioshop_variant_etl {
+workflow bioshop_variant_call {
     String pipeline_version = "1.0.0"
 
     input {
@@ -133,16 +130,13 @@ workflow bioshop_variant_etl {
 
         File query_vcf
         File query_vcf_index
-        File target_vcf
-        File target_vcf_index
+        String model
 
         File ref_fasta
         File ref_fasta_index
         File ref_dict
         Array[Pair[String, String]] interval_strat_map
 
-        Boolean classifier_model_combine = true
-        String classifier_model_type = "xgb"
 
         Int small_disk = 128
         Int medium_disk = 256
@@ -167,32 +161,30 @@ workflow bioshop_variant_etl {
     }
     
     scatter (interval_list in interval_shards.output_intervals) {
-      call bioshop_variant_etl_task as etl {
+      call bioshop_variant_call_task as call_task {
         input:
-          interval_list = interval_list,
           query_vcf = query_vcf,
           query_vcf_index = query_vcf_index,
-          target_vcf = target_vcf,
-          target_vcf_index = target_vcf_index,
-          interval_strats = interval_strats,
           ref_fasta = ref_fasta,
           ref_fasta_index = ref_fasta_index,
           ref_dict = ref_dict,
+          model = model,
+          interval_strats = interval_strats,
+          interval_list = interval_list,
           disk_size = large_disk,
           output_basename = output_basename
       }
     }
 
-    call bioshop_variant_fit_task as fit {
+    call gather_vcfs as gather {
       input:
-        classifier_training_data = etl.etl_dataframe,
-        classifier_model_type = classifier_model_type,
-        classifier_model_combine = classifier_model_combine,
-        disk_size = large_disk,
-        output_basename = output_basename
+        input_vcfs = call_task.output_vcf,
+        output_vcf_basename = output_basename,
+        disk_size = huge_disk
     }
 
     output {
-        File classifier_path = fit.classifier_path
+        File output_vcf = gather.output_vcf
+        File output_vcf_index = gather.output_vcf_index
     }
 }
