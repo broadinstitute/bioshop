@@ -1,0 +1,12 @@
+{
+  "JointVcfFiltering.gatk_docker": "Use a GATK docker built off of master anytime after Aug 9 (commit 05a76349aac401cc5d08ad0375c45fa9d4c7c864)",
+  "JointVcfFiltering.vcf": ["your_joint_vcf_input.vcf"],
+  "JointVcfFiltering.vcf_index": ["your_joint_vcf_input_index.vcf.idx"],
+  "JointVcfFiltering.sites_only_vcf": "your_joint_vcf_input.vcf",
+  "JointVcfFiltering.sites_only_vcf_index": "your_joint_vcf_input_index.vcf.idx",
+  "JointVcfFiltering.basename": "output_file_name",
+  "JointVcfFiltering.snp_annotations": "-A AS_ReadPosRankSum -A AS_FS -A AS_SOR -A AS_QD -A AVERAGE_TREE_SCORE -A AVERAGE_ASSEMBLED_HAPS -A AVERAGE_FILTERED_HAPS",
+  "JointVcfFiltering.indel_annotations": "-A AS_MQRankSum -A AS_ReadPosRankSum -A AS_FS -A AS_SOR -A AS_QD -A AVERAGE_TREE_SCORE",
+  "JointVcfFiltering.model_backend": "PYTHON_IFOREST",
+  "JointVcfFiltering.use_allele_specific_annotations": true
+}
