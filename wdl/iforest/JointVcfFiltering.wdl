@@ -109,26 +109,26 @@ workflow JointVcfFiltering {
       ref_fasta = ref_fasta,
       ref_fasta_index = ref_fasta_index,
       ref_dict = ref_dict,
-      disk_size = small_disk,
+      disk_size = small_disk
   }
 
   scatter (interval in interval_list.interval_shards) {
-    call SelectVariants as shard_vcf {
+    call ShardVcf as shard_vcf {
       input:
-        interval = interval
+        interval = interval,
         vcf = input_vcf,
         vcf_index = input_vcf_index,
         ref_fasta = ref_fasta,
         ref_fasta_index = ref_fasta_index,
-        ref_dict = ref_dict,
+        ref_dict = ref_dict
     }
   }
 
-  scatter(idx in range(length(shard_vcf.output_vcf))) {
+  scatter(idx in range(scatter_count)) {
     call ScoreVariantAnnotations as ScoreVariantAnnotationsSNPs {
       input:
-        vcf = shard_vcf.output_vcf[idx],
-        vcf_index = shard_vcf.output_vcf_index[idx],
+        vcf = shard_vcf.vcf_shard[idx],
+        vcf_index = shard_vcf.vcf_index_shard[idx],
         basename = basename,
         mode = "SNP",
         model_backend = model_backend,
@@ -373,7 +373,7 @@ task SplitIntervalList {
   }
 }
 
-task SelectVariants {
+task ShardVcf {
   input {
     File interval
     File vcf
@@ -383,6 +383,13 @@ task SelectVariants {
     File ref_fasta_index
     File ref_dict
   }
+
+  parameter_meta {
+    vcf: {
+      localization_optional: true
+    }
+  }
+
 
   String base_vcf = basename(vcf)
   String base_vcf_index = basename(vcf_index)
