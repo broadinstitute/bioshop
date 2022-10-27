@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import sys
 
-from .. ann.classify import Classifier, numlint, balance_dataframe
+from .. ann.classify import Classifier, numlint, balance_dataframe, get_label_columns
 from .. utils import concat_saved_dataframes
 
 Classifiers = {
@@ -97,7 +97,8 @@ def fit_classifier(clf_class=None, df=None, test_frac=None, random_seed=None):
 def create_combined_models(args):
     df = concat_saved_dataframes(args.input_list)
     df = numlint(df)
-    df = balance_dataframe(df=df, random_seed=args.random_seed)
+    #df = balance_dataframe(df=df, random_seed=args.random_seed)
+    df = minimize_and_balance_dataframe(df=df, random_seed=args.random_seed)
     clf_class = Classifiers[args.classifier]
     clf = fit_classifier(
         clf_class=clf_class, 
@@ -107,10 +108,42 @@ def create_combined_models(args):
     )
     clf.save_classifier(args.classifier_path)
 
+def minimize_and_balance_dataframe(df=None, random_seed=None):
+    label_col = get_label_columns(df)[0]
+    # SNP
+    df_snp = df[df.feature_is_snp == True]
+    df_snp_pos = df_snp[df_snp[label_col] == True]
+    df_snp_neg = df_snp[df_snp[label_col] == False]
+    # XXX: seed
+    df_indel = df[df.feature_is_snp == False]
+    df_indel_pos = df_indel[df_indel[label_col] == True]
+    df_indel_neg = df_indel[df_indel[label_col] == False]
+    #
+    df_list = [df_snp_pos, df_snp_neg, df_indel_pos, df_indel_neg]
+    n_max = min(map(len, df_list))
+
+    print("Balancing classes")
+    msg = f'df_snp_pos: {len(df_snp_pos)}, df_snp_neg: {len(df_snp_neg)}, df_indel_pos: {len(df_indel_pos)}, df_indel_neg: {len(df_indel_neg)}'
+    print(msg)
+    print(f'Minimizing to {n_max}')
+
+    # XXX: random seed
+    df_list = [df.sample(n=n_max) for df in df_list]
+    #df_list = [balance_dataframe(df=df) for df in df_list]
+    df = pd.concat(df_list).sample(frac=1)
+    return df
+
 def create_seperate_models(args):
     (root, cfn) = os.path.split(args.classifier_path)
     df = concat_saved_dataframes(args.input_list)
     df = numlint(df)
+    # SNP
+    df_snp = df[df.feature_is_snp == True].drop(columns='feature_is_snp')
+    df_snp = balance_dataframe(df=df_snp, random_seed=args.random_seed)
+    # INDEL
+    df_indel = df[df.feature_is_snp == False].drop(columns='feature_is_snp')
+    df_indel = balance_dataframe(df=df_indel, random_seed=args.random_seed)
+
     # SNP
     df_snp = df[df.feature_is_snp == True].drop(columns='feature_is_snp')
     df_snp = balance_dataframe(df=df_snp, random_seed=args.random_seed)
