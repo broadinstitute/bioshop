@@ -1,10 +1,9 @@
 #!/bin/bash
 set -eo pipefail
 
-./format_wdl.py 
-womtool validate JointVcfFiltering_formatted.wdl
+womtool validate JointVcfFiltering.wdl
 
 fissfc meth_new \
-    -d JointVcfFiltering_formatted.wdl \
+    -d JointVcfFiltering.wdl \
     -s "Isolation forest joint VCF filtering" \
     -m JointVcfFiltering

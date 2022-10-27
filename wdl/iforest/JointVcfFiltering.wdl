@@ -102,7 +102,7 @@ workflow JointVcfFiltering {
       gatk_docker = gatk_docker
   }
 
-  call SplitIntervalList as interval_shards {
+  call SplitIntervalList as interval_list {
     input:
       interval_list = unpadded_intervals,
       scatter_count = scatter_count,
@@ -112,21 +112,23 @@ workflow JointVcfFiltering {
       disk_size = small_disk,
   }
 
-  call SelectVariants as subset_input_vcf {
-    input:
-      input_intervals = interval_shards.output_intervals,
-      input_vcf_file = input_vcf,
-      input_vcf_index_file = input_vcf_index,
-      ref_fasta = ref_fasta,
-      ref_fasta_index = ref_fasta_index,
-      ref_dict = ref_dict,
+  scatter (interval in interval_list.interval_shards) {
+    call SelectVariants as shard_vcf {
+      input:
+        interval = interval
+        vcf = input_vcf,
+        vcf_index = input_vcf_index,
+        ref_fasta = ref_fasta,
+        ref_fasta_index = ref_fasta_index,
+        ref_dict = ref_dict,
+    }
   }
 
-  scatter(idx in range(length(subset_input_vcf.output_vcf))) {
+  scatter(idx in range(length(shard_vcf.output_vcf))) {
     call ScoreVariantAnnotations as ScoreVariantAnnotationsSNPs {
       input:
-        vcf = subset_input_vcf.output_vcf[idx],
-        vcf_index = subset_input_vcf.output_vcf_index[idx],
+        vcf = shard_vcf.output_vcf[idx],
+        vcf_index = shard_vcf.output_vcf_index[idx],
         basename = basename,
         mode = "SNP",
         model_backend = model_backend,
@@ -367,33 +369,42 @@ task SplitIntervalList {
   }
 
   output {
-    Array[File] output_intervals = glob("scatterDir/*")
+    Array[File] interval_shards = glob("scatterDir/*")
   }
 }
 
 task SelectVariants {
   input {
-    Array[File] input_intervals
-    File input_vcf_file
-    File input_vcf_index_file
+    File interval
+    File vcf
+    File vcf_index
 
     File ref_fasta
     File ref_fasta_index
     File ref_dict
   }
 
-  String base_vcf = basename(input_vcf_file)
+  String base_vcf = basename(vcf)
+  String base_vcf_index = basename(vcf_index)
+  String base_interval = basename(interval)
+
   Boolean is_compressed = basename(base_vcf, "gz") != base_vcf
   String vcf_suffix = if is_compressed then ".vcf.gz" else ".vcf"
   String vcf_index_suffix = if is_compressed then ".tbi" else ".idx"
-  Int disk_size = 3 * ceil(size(input_vcf_file, "GiB") + size(input_vcf_index_file, "GiB") + size(ref_fasta, "GiB") + size(ref_fasta_index, "GiB") + size(ref_dict, "GiB"))
+  String output_vcf = base_interval + "-" + base_vcf + vcf_suffix
+  String output_vcf_index = base_interval + "-" + base_vcf + vcf_suffix + vcf_index_suffix
+  Int disk_size = 3 * ceil(size(vcf, "GiB") + size(vcf_index, "GiB") + size(ref_fasta, "GiB") + size(ref_fasta_index, "GiB") + size(ref_dict, "GiB"))
 
   command <<<
     set -eo pipefail
-    cat > /tmp/script <<END
-%s
-    END
-    python3 /tmp/script
+    gatk \
+      --java-options "-Xms3000m -Xmx3200m" \
+      SelectVariants \
+      --create-output-variant-index \
+      -V ~{vcf} \
+      -R ~{ref_fasta} \
+      -L ~{interval} \
+      -O ~{output_vcf}
   >>>
 
   runtime {
@@ -405,7 +416,7 @@ task SelectVariants {
   }
 
   output {
-    Array[File] output_vcf = glob("vcf_splits/*.${vcf_suffix}")
-    Array[File] output_vcf_index = glob("vcf_splits/*.${vcf_index_suffix}")
+    File vcf_shard = output_vcf
+    File vcf_index_shard = output_vcf_index
   }
 }
