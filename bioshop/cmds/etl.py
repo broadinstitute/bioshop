@@ -169,7 +169,7 @@ def main_cli(args=None):
         for interval_list in load_interval_lists(args.intervals):
             intervals += interval_list
     if args.region:
-        intervals += [Region(reg) for reg in region]
+        intervals += [Region(reg) for reg in args.region]
     # XXX: flatten intervals?
     args.intervals = intervals
     validate_args(args)
