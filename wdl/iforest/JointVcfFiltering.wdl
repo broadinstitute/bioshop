@@ -165,9 +165,16 @@ workflow JointVcfFiltering {
 
   }
 
+  call GatherVcfs as FinalGather {
+    input:
+      input_vcfs = ScoreVariantAnnotationsINDELs.output_vcf,
+      output_vcf_name = "~{basename}.vcf.gz",
+      disk_size = 2 * ceil(size(input_vcf, "GiB") + size(input_vcf_index, "GiB"))
+  }
+
   output {
-    Array[File] variant_scored_vcf = ScoreVariantAnnotationsINDELs.output_vcf
-    Array[File] variant_scored_vcf_index = ScoreVariantAnnotationsINDELs.output_vcf_index
+    File variant_scored_vcf = FinalGather.output_vcf
+    File variant_scored_vcf_index = FinalGather.output_vcf_index
   }
 }
 
@@ -427,3 +434,51 @@ task ShardVcf {
     File vcf_index_shard = output_vcf_index
   }
 }
+
+task GatherVcfs {
+
+  input {
+    Array[File] input_vcfs
+    String output_vcf_name
+    Int disk_size
+    String gatk_docker = "us.gcr.io/broad-gatk/gatk:4.2.6.1"
+  }
+
+  parameter_meta {
+    input_vcfs: {
+      localization_optional: true
+    }
+  }
+
+  command <<<
+    set -euo pipefail
+
+    # --ignore-safety-checks makes a big performance difference so we include it in our invocation.
+    # This argument disables expensive checks that the file headers contain the same set of
+    # genotyped samples and that files are in order by position of first record.
+    gatk --java-options "-Xms6000m -Xmx6500m" \
+      GatherVcfsCloud \
+      --ignore-safety-checks \
+      --gather-type BLOCK \
+      --input ~{sep=" --input " input_vcfs} \
+      --output ~{output_vcf_name}
+
+    tabix ~{output_vcf_name}
+  >>>
+
+  runtime {
+    memory: "7000 MiB"
+    cpu: "1"
+    bootDiskSizeGb: 15
+    disks: "local-disk " + disk_size + " HDD"
+    preemptible: 1
+    docker: gatk_docker
+  }
+
+  output {
+    File output_vcf = "~{output_vcf_name}"
+    File output_vcf_index = "~{output_vcf_name}.tbi"
+  }
+}
+
+
