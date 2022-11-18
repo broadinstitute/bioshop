@@ -212,7 +212,7 @@ def balance_dataframe(df=None, label_cols=None, random_seed=None):
     df = df.sample(frac=1, random_state=random_seed)
     return df
 
-def classify_vcf(vcf=None, region=None, classifier=None, overlaps=None, annotate=None, batch_size=10_000, remote=None):
+def classify_vcf(vcf=None, region=None, classifier=None, overlaps=None, annotate=None, melter=None, batch_size=10_000, remote=None):
     itr = iter_sites(vcf=vcf, region=region)
     if remote:
         itr = pos_monitor(itr, remote)
@@ -220,6 +220,8 @@ def classify_vcf(vcf=None, region=None, classifier=None, overlaps=None, annotate
     #itr = filter_by_site(itr=itr)
     if overlaps is not None:
         itr = overlaps_with_site(itr, overlaps=overlaps)
+    if melter is not None:
+        itr = melt_site(itr, melter=melter)
     itr = iter_alleles(itr=itr)
     if remote:
         itr = iter_monitor(itr, remote, 'alleles')
@@ -241,10 +243,11 @@ def numlint(thing, posinf=0, neginf=0, nan=0, **extra):
     raise TypeError(type(thing))
 
 class ClassifyTask:
-    def __init__(self, query_vcf=None, classifier_path=None, overlaps=None, annotate=None, mode='logodds'):
+    def __init__(self, query_vcf=None, classifier_path=None, overlaps=None, melter=None, annotate=None, mode='logodds'):
         self.query_vcf = query_vcf
         self.classifier_path = classifier_path
         self.overlaps = overlaps
+        self.melter = melter
         self.annotate = annotate
         self.mode = mode
         self.classify_remote = get_remote_monitor(domain='CLS')
@@ -255,6 +258,7 @@ class ClassifyTask:
             vcf=self.query_vcf, 
             region=region, 
             overlaps=self.overlaps, 
+            melter=self.melter, 
             annotate=self.annotate, 
             remote=self.vector_remote
         )

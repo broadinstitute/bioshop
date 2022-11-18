@@ -21,7 +21,7 @@ def interval_cmp(func):
     return cmpfunc
 
 class Region(object):
-    re_region = re.compile('(\w+):?(\d+)?-?(\d+)?')
+    re_region = re.compile(r'(\w+):?(\d+)?-?(\d+)?')
 
     def __init__(self, chrom=None, start=None, stop=None, contig=None, midpoint=None, width=None):
         if not (bool(chrom) ^ bool(contig)):
@@ -107,6 +107,16 @@ class Region(object):
             'stop': kw.get('stop', self.stop),
         }
         return self.__class__(**kw)
+
+    def window(self, width=None, step=None):
+        assert ((width > 0) and (step > 0))
+        for pos in P.iterate(self.interval, step=step):
+            if pos >= self.stop:
+                break
+            start = max(self.start, pos)
+            stop = min(self.stop, pos + width)
+            assert (stop == self.stop) or ((stop - start) == width)
+            yield self.__class__(self.chrom, start, stop)
 
     def split(self, step=None):
         for pos in P.iterate(self.interval, step=step):

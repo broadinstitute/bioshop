@@ -5,6 +5,7 @@ class Reference:
         self.reference_path = reference_path
         self.reference_index_path = reference_index_path
         self._reference = None
+        self._seq_cache = {}
 
     @property
     def reference(self):
@@ -15,11 +16,13 @@ class Reference:
             )
         return self._reference
 
-    def get_sequence(self, name=None, as_type=str):
-        seq = self.reference[name]
-        if as_type:
-            seq = as_type(seq)
-        return seq
+    def get_sequence(self, name=None):
+        if name not in self._seq_cache:
+            seq = self.reference[name]
+            # sync from disk
+            seq = str(seq)
+            self._seq_cache[name] = seq
+        return self._seq_cache[name]
     
     def __getitem__(self, name):
         return self.get_sequence(name=name)

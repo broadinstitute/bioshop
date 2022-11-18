@@ -57,6 +57,14 @@ def overlaps_with_site(itr=None, overlaps=None, slop=5):
             row.feature.update(ovmap)
         yield row
 
+def melt_site(itr=None, melter=None):
+    for row in itr:
+        if not row.filter:
+            (mean, std) = melter.melt_site(site=row.cache.site)
+            row.feature.melt_temp_mean = mean
+            row.feature.melt_temp_std = std
+        yield row
+
 def filter_by_site(itr=None, skip_filtered=False, skip_ambiguous_bases=True):
     for row in itr:
         site = row.cache.site

@@ -28,7 +28,7 @@ def fingerprint_allele(itr):
             )
         yield row
 
-def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=0, remote=None):
+def fingerprint_vcf(vcf=None, region=None, flanker=None, melter=None, overlaps=None, slop=0, remote=None):
     if slop > 0:
         region.start = max(1, region.start - slop)
         region.stop = region.stop + slop
@@ -40,6 +40,8 @@ def fingerprint_vcf(vcf=None, region=None, flanker=None, overlaps=None, slop=0, 
     itr = filter_by_site(itr=itr)
     if overlaps is not None:
         itr = overlaps_with_site(itr, overlaps=overlaps)
+    if melter is not None:
+        itr = melt_site(itr, melter=melter)
     itr = iter_alleles(itr=itr) 
     itr = filter_by_allele(itr=itr)
     itr = fingerprint_allele(itr=itr)
@@ -82,10 +84,11 @@ class AlleleIndex(object):
         return False
 
 class ComparisonTask:
-    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, overlaps=None, annotate=None, slop=50):
+    def __init__(self, query_vcf=None, target_vcf=None, flanker=None, melter=None, overlaps=None, annotate=None, slop=50):
         self.query_vcf = query_vcf
         self.target_vcf = target_vcf
         self.flanker = flanker
+        self.melter = melter
         self.overlaps = overlaps
         self.annotate = annotate
         self.slop = slop
@@ -100,7 +103,7 @@ class ComparisonTask:
         )
         query_prints = fingerprint_vcf(
             vcf=self.query_vcf, region=region, flanker=self.flanker, 
-            overlaps=self.overlaps, 
+            melter=self.melter, overlaps=self.overlaps, 
             remote=self.fingerprint_remote
         )
         if self.annotate is not None:
@@ -140,7 +143,11 @@ class ComparisonTask:
             reg_df_list = list(itr)
         """
 
+        # dataframes come back unordered, but are tagged by region
+        # use this tag to sort the dataframes by reference position
         reg_df_list = sorted(reg_df_list, key=lambda it: it[0].start)
+        # ditch the region tags and drop empty subregions (no dataframe) 
         df_list = [it[1] for it in reg_df_list if it[1] is not None]
+        # with any remaining dataframes, concat and return, else return None
         df = pd.concat(df_list) if len(df_list) else None
         return df

@@ -7,6 +7,7 @@ from .. rep.reference import Reference
 from .. rep.vcf import VCF
 from .. rep.region import Region
 from .. ann.flank import VariantFlanks
+from .. ann.melt import OligoMelt
 from .. ann.iters import *
 from .. ann.fingerprint import ComparisonTask
 from .. io.intervals import load_interval_lists
@@ -128,11 +129,13 @@ def call(
         items = [(key, spec[key]) for key in order if key in spec]
         query_vcf.header.add_meta(key='INFO', items=items)
     output_vcf = query_vcf.to_writer(output_vcf_path)
+    melter = OligoMelt(reference=reference)
     annotate_func = AnnotateCozy()
     cls = ClassifyTask(
         query_vcf=query_vcf,
         classifier_path=classifier_path,
         overlaps=overlaps,
+        melter=melter,
         annotate=annotate_func,
     )
     mon = Monitor()

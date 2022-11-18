@@ -125,11 +125,12 @@ def minimize_and_balance_dataframe(df=None, random_seed=None):
     print("Balancing classes")
     msg = f'df_snp_pos: {len(df_snp_pos)}, df_snp_neg: {len(df_snp_neg)}, df_indel_pos: {len(df_indel_pos)}, df_indel_neg: {len(df_indel_neg)}'
     print(msg)
-    print(f'Minimizing to {n_max}')
 
-    # XXX: random seed
+    print(f'Minimizing to {n_max}')
     df_list = [df.sample(n=n_max) for df in df_list]
+    #print("balancing classes")
     #df_list = [balance_dataframe(df=df) for df in df_list]
+    # XXX: random seed
     df = pd.concat(df_list).sample(frac=1)
     return df
 

@@ -7,6 +7,7 @@ from .. rep.reference import Reference
 from .. rep.vcf import VCF
 from .. rep.region import Region
 from .. ann.flank import VariantFlanks
+from .. ann.melt import OligoMelt
 from .. ann.iters import *
 from .. ann.fingerprint import ComparisonTask
 from .. ann.classify import AnnotateCozy
@@ -124,11 +125,13 @@ def etl(
     target_vcf = VCF(target_vcf_path, index_filename=target_vcf_index_path, drop_samples=True)
     query_vcf = VCF(query_vcf_path, index_filename=query_vcf_index_path, drop_samples=True)
     flanker = VariantFlanks(reference=reference)
+    melter = OligoMelt(reference=reference)
     annotate_func = AnnotateCozy()
     cmp = ComparisonTask(
         query_vcf=query_vcf,
         target_vcf=target_vcf,
         flanker=flanker,
+        melter=melter,
         overlaps=overlaps,
         annotate=annotate_func,
     )
