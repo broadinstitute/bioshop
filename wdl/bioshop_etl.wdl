@@ -96,7 +96,7 @@ task bioshop_variant_etl_task {
   command <<<
     set -e -o pipefail
 
-    touch ~{query_vcf} ~{target_vcf}
+    touch ~{query_vcf_index} ~{target_vcf_index}
 
     newt etl \
       --query_vcf ~{query_vcf} \
